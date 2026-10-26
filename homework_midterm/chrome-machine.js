@@ -66,9 +66,9 @@ class ChromeMachine {
   for(let i=0;i<10;i++){
    const group=new T.Group(),body=new T.Mesh(treadGeo,this.darkChrome),top=new T.Mesh(topGeo,this.treadChrome),nose=new T.Mesh(noseGeo,this.chrome);top.position.y=.125;nose.position.set(0,.13,.219);group.add(body,top,nose);
    const ribs=new T.InstancedMesh(ribGeo,this.darkChrome,12);const matrix=new T.Matrix4();for(let k=0;k<12;k++){matrix.makeTranslation(-1.15+k*.209,.156,0);ribs.setMatrixAt(k,matrix);}group.add(ribs);
-   // Sparse serial etchings replace names on every step. Details appear only on selection.
-   const surfaceCanvas=document.createElement('canvas');surfaceCanvas.width=512;surfaceCanvas.height=128;const texture=new T.CanvasTexture(surfaceCanvas);texture.colorSpace=T.SRGBColorSpace;
-   const writing=new T.Mesh(new T.PlaneGeometry(2.15,.3),new T.MeshBasicMaterial({map:texture,transparent:true,opacity:.55,depthWrite:false,toneMapped:false}));writing.rotation.x=-Math.PI/2;writing.position.set(0,.162,0);group.add(writing);
+   // Recorded treads have a high-contrast inset nameplate; empty chrome stays unmarked.
+   const surfaceCanvas=document.createElement('canvas');surfaceCanvas.width=1024;surfaceCanvas.height=128;const texture=new T.CanvasTexture(surfaceCanvas);texture.colorSpace=T.SRGBColorSpace;
+   const writing=new T.Mesh(new T.PlaneGeometry(2.15,.24),new T.MeshBasicMaterial({map:texture,transparent:true,opacity:.55,depthWrite:false,toneMapped:false}));writing.position.set(0,0,.248);group.add(writing);
    this.machine.add(group);this.steps.push({group,canvas:surfaceCanvas,texture,writing,key:''});
   }
   const boltGeo=new T.SphereGeometry(.028,12,8);for(const x of [-1.3,1.3]){const b=new T.Mesh(boltGeo,this.chrome);b.scale.z=.35;b.position.set(x,.27,1.89);this.machine.add(b);}
@@ -110,17 +110,25 @@ class ChromeMachine {
    slot.group.position.set(x,2.94-z*.305,-1.86+z*.43);
    const active=item?.id===state.selectedId;
    const key=item?`${item.id}:${item.name}:${item.at}:${active}:${state.flash>.3}`:`empty:${base+i}`;
-   if(key!==slot.key){slot.key=key;const c=slot.canvas.getContext('2d');c.clearRect(0,0,512,128);c.fillStyle=active?'#f5faff':'#b9c7d1';
-    if(item){c.font=active?'23px sans-serif':'17px monospace';c.textAlign='left';c.fillText(active?item.name.slice(0,18):String(recordIndex).padStart(2,'0'),28,76);c.font='16px monospace';c.textAlign='right';c.fillText(item.type==='meal'?'↓':'↑',480,76);}
-    else if(recordIndex===0){c.font='38px sans-serif';c.textAlign='center';c.fillText('+',256,83);}slot.texture.needsUpdate=true;
+   if(key!==slot.key){
+    slot.key=key;const c=slot.canvas.getContext('2d');c.clearRect(0,0,1024,128);
+    if(item){
+     c.fillStyle='#030608';c.beginPath();c.roundRect(14,10,996,108,13);c.fill();
+     c.strokeStyle=active?'#c7dfef':'#5e748578';c.lineWidth=active?4:2;c.stroke();
+     c.fillStyle='#e8f6ff';c.beginPath();c.arc(65,64,7,0,Math.PI*2);c.fill();
+     c.font='54px "Malgun Gothic","Apple SD Gothic Neo",sans-serif';c.textAlign='left';c.textBaseline='middle';
+     const name=Array.from(item.name);c.fillText(name.length>10?name.slice(0,10).join('')+'…':item.name,108,66,780);
+     c.font='43px sans-serif';c.textAlign='right';c.fillStyle='#aabfcd';c.fillText(item.type==='meal'?'↓':'↑',962,65);
+    }else if(recordIndex===0){c.fillStyle='#e8f6ff';c.font='65px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('+',512,67);}
+    slot.texture.needsUpdate=true;
    }
-   slot.writing.material.opacity=active ? .85 : .3;
+   slot.writing.material.opacity=item?1:.55;
    areas.push({group:slot.group,entry:item||null,index:base+i});
   }
   this.pendingGroup.visible=Boolean(state.pending);
   if(state.pending){this.pendingGroup.position.set(0,3.2+state.gesture*.0024,-1.55+state.gesture*.001);const key=state.pending.id;if(this.pendingKey!==key){this.pendingKey=key;const c=this.pendingCanvas.getContext('2d');c.clearRect(0,0,512,128);c.fillStyle='#f3f8fc';c.font='34px sans-serif';c.textAlign='center';c.fillText((state.pending.type==='meal'?'↓ ':'↑ ')+state.pending.name.slice(0,12),256,83);this.pendingTexture.needsUpdate=true;}}
   this.scene.updateMatrixWorld(true);this.camera.updateMatrixWorld(true);
-  const projected=areas.map(a=>{const center=this.project([0,.165,0],a.group),next=this.project([0,.165-.305,.43],a.group);return {entry:a.entry,index:a.index,pitch:Math.max(18,Math.abs(next[1]-center[1])),points:[[-1.31,.165,-.222],[1.31,.165,-.222],[1.31,.165,.222],[-1.31,.165,.222]].map(p=>this.project(p,a.group))};});
+  const projected=areas.map(a=>{const center=this.project([0,.165,0],a.group),next=this.project([0,.165-.305,.43],a.group);return {entry:a.entry,index:a.index,pitch:Math.max(18,Math.abs(next[1]-center[1])),points:[[-1.31,.165,-.222],[1.31,.165,-.222],[1.31,.165,.222],[-1.31,.165,.222]].map(p=>this.project(p,a.group)),frontPoints:[[-1.31,.12,.25],[1.31,.12,.25],[1.31,-.12,.25],[-1.31,-.12,.25]].map(p=>this.project(p,a.group))};});
   const zones=[{kind:'move',points:[[-.11,-.11,.025],[.11,-.11,.025],[.11,.11,.025],[-.11,.11,.025]].map(p=>this.project(p,this.buttonGroup))}];
   if(this.bloom){
    this.renderer.setRenderTarget(this.beauty);this.renderer.render(this.scene,this.camera);

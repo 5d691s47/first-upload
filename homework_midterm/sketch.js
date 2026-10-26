@@ -194,7 +194,7 @@ function draw(){
   ctx.clearRect(0,0,width,height);
   const result=chromeRenderer.render({width,height,entries:rows(),pending,selectedId,position:beltPosition,gesture:gestureOffset,animation:animationOffset,extractedId,extractX,flash,idle:pointers.size===0&&!document.querySelector('dialog[open]'),reduceMotion});
   const convert=points=>points.map(([x,y])=>[(x-originX)/scale,(y-originY)/scale]);
-  hitAreas=result.areas.map(a=>({...a,points:convert(a.points)}));hitZones=result.zones.map(a=>({...a,points:convert(a.points)}));
+  hitAreas=result.areas.map(a=>({...a,points:convert(a.points),frontPoints:a.frontPoints?convert(a.frontPoints):null}));hitZones=result.zones.map(a=>({...a,points:convert(a.points)}));
   if(holdPoint&&holdStart){const progress=clamp((performance.now()-holdStart)/520,0,1);ctx.beginPath();ctx.arc(holdPoint.x,holdPoint.y,19,-Math.PI/2,-Math.PI/2+Math.PI*2*progress);ctx.strokeStyle='#edf8ff';ctx.lineWidth=1.3;ctx.stroke();}
 }
 function animateStamp(direction){cancelAnimationFrame(stampFrame);if(reduceMotion){animationOffset=0;flash=0;draw();return;}const start=performance.now();function tick(now){const t=clamp((now-start)/520,0,1);animationOffset=direction*43*(1-Math.pow(1-t,3));flash=1-t;draw();if(t<1)stampFrame=requestAnimationFrame(tick);else{animationOffset=0;flash=0;draw();}}stampFrame=requestAnimationFrame(tick);}
@@ -202,7 +202,7 @@ function stopMotion(){cancelAnimationFrame(motionFrame);motionFrame=0;}
 function inertia(velocity){stopMotion();if(reduceMotion||Math.abs(velocity)<.012)return;let last=performance.now();function tick(now){const delta=Math.min(32,now-last);last=now;velocity*=Math.pow(.88,delta/16);beltPosition+=velocity*delta/16;draw();if(Math.abs(velocity)>.003)motionFrame=requestAnimationFrame(tick);else motionFrame=0;}motionFrame=requestAnimationFrame(tick);}
 function inside(point,points){let yes=false;for(let i=0,j=points.length-1;i<points.length;j=i++){const [xi,yi]=points[i],[xj,yj]=points[j];if(((yi>point.y)!==(yj>point.y))&&(point.x<(xj-xi)*(point.y-yi)/(yj-yi)+xi))yes=!yes;}return yes;}
 function localPoint(event){const r=canvas.getBoundingClientRect();return {x:(event.clientX-r.left-originX)/scale,y:(event.clientY-r.top-originY)/scale};}
-function pick(event){const point=localPoint(event);return hitZones.find(h=>inside(point,h.points))||hitAreas.slice().reverse().find(h=>inside(point,h.points))||null;}
+function pick(event){const point=localPoint(event);return hitZones.find(h=>inside(point,h.points))||hitAreas.slice().reverse().find(h=>inside(point,h.points)||(h.frontPoints&&inside(point,h.frontPoints)))||null;}
 function clearHold(){clearTimeout(holdTimer);cancelAnimationFrame(holdFrame);holdStart=0;holdPoint=null;}
 const pointers=new Map();let startX=0,startY=0,startPosition=0,lastY=0,lastTime=0,velocity=0,dragStepPitch=68,axis=null,downHit=null,holdFired=false,pinching=false,pinchDistance=0,pinchOpen=false,dragMoved=false;
 function resetPointers(){for(const id of pointers.keys()){try{if(canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);}catch{}}pointers.clear();pinching=false;clearHold();gestureOffset=0;extractX=0;extractedId=null;}
@@ -268,5 +268,5 @@ function idleFrame(now){if(chromeRenderer&&!document.hidden&&now-lastIdleFrame>7
 if(chromeRenderer&&!reduceMotion)requestAnimationFrame(idleFrame);
 if(loaded.migrated){persist();notify('이전 기록과 식탁 메모를 가져왔어요.');}
 else if(loaded.error)notify('저장 데이터를 읽지 못해 원본을 보존했어요. 백업을 불러올 수 있어요.');
-hint('계단을 잡고 위아래로 밀어 보세요. 길게 누르면 기록해요.',10000);
+hint('이름판이 있는 계단이 저장된 기록이에요. 눌러 확인하세요.',10000);
 })();
