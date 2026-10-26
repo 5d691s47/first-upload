@@ -101,8 +101,13 @@ class ChromeMachine {
   if(this.lost)return {areas:[],zones:[]};this.resize(state.width,state.height);
   const now=performance.now();if(state.idle&&!state.reduceMotion)this.pose=Math.sin(now*.00016)*.027;this.machine.rotation.y=this.pose;
   const entries=state.entries,list=[null,...entries.slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(state.position),fraction=state.position-base;const areas=[];
-  const meals=entries.filter(e=>e.type==='meal').length,minutes=entries.filter(e=>e.type==='move').reduce((n,e)=>n+e.amount,0),consoleKey=meals+'/'+minutes;
-  if(this.consoleKey!==consoleKey){this.consoleKey=consoleKey;const c=this.consoleCanvas.getContext('2d');c.clearRect(0,0,512,192);c.fillStyle='#c8d5df';c.font='52px monospace';c.textAlign='center';c.fillText(String(meals).padStart(2,'0')+' / '+String(minutes).padStart(2,'0'),256,103);c.fillStyle='#6c7e8e';c.font='14px monospace';c.fillText('B I T E   /   S T R I D E',256,150);this.consoleTexture.needsUpdate=true;}
+  const meter=state.calorieMeter||{consumed:0,limit:null,label:'0 / —'},consoleKey=meter.label+'/'+state.date;
+  if(this.consoleKey!==consoleKey){
+   this.consoleKey=consoleKey;const c=this.consoleCanvas.getContext('2d');c.clearRect(0,0,512,192);c.fillStyle='#e5f0f8';c.textAlign='center';
+   let size=52;c.font=size+'px monospace';while(c.measureText(meter.label).width>460&&size>25){size--;c.font=size+'px monospace';}c.fillText(meter.label,256,99);
+   c.fillStyle='#91a6b7';c.font='15px monospace';c.fillText('KCAL  /  '+(state.date||'').slice(5).replace('-','.')+(meter.limit==null?'  ·  SET LIMIT':''),256,143);
+   c.fillStyle='#26323c';c.fillRect(55,166,402,2);if(meter.limit!=null){c.fillStyle='#cadce9';c.fillRect(55,166,402*Math.min(1,meter.consumed/meter.limit),2);}this.consoleTexture.needsUpdate=true;
+  }
   for(let k=0;k<this.steps.length;k++){
    const slot=this.steps[k],i=k-1,z=i-fraction+state.animation/43,recordIndex=(((base+i)%cycleLength)+cycleLength)%cycleLength,item=list[recordIndex];slot.group.visible=z>-.65&&z<7.65;if(!slot.group.visible)continue;
    const edge=Math.max(0,Math.min(1,(z+.65)/.65,(7.65-z)/.65));slot.group.scale.set(1,edge,edge);slot.group.rotation.x=z<0?Math.min(.85,-z*1.2):z>7?-Math.min(.85,(z-7)*1.2):0;
@@ -129,7 +134,7 @@ class ChromeMachine {
   if(state.pending){this.pendingGroup.position.set(0,3.2+state.gesture*.0024,-1.55+state.gesture*.001);const key=state.pending.id;if(this.pendingKey!==key){this.pendingKey=key;const c=this.pendingCanvas.getContext('2d');c.clearRect(0,0,512,128);c.fillStyle='#f3f8fc';c.font='34px sans-serif';c.textAlign='center';c.fillText((state.pending.type==='meal'?'↓ ':'↑ ')+state.pending.name.slice(0,12),256,83);this.pendingTexture.needsUpdate=true;}}
   this.scene.updateMatrixWorld(true);this.camera.updateMatrixWorld(true);
   const projected=areas.map(a=>{const center=this.project([0,.165,0],a.group),next=this.project([0,.165-.305,.43],a.group);return {entry:a.entry,index:a.index,pitch:Math.max(18,Math.abs(next[1]-center[1])),points:[[-1.31,.165,-.222],[1.31,.165,-.222],[1.31,.165,.222],[-1.31,.165,.222]].map(p=>this.project(p,a.group)),frontPoints:[[-1.31,.12,.25],[1.31,.12,.25],[1.31,-.12,.25],[-1.31,-.12,.25]].map(p=>this.project(p,a.group))};});
-  const zones=[{kind:'move',points:[[-.11,-.11,.025],[.11,-.11,.025],[.11,.11,.025],[-.11,.11,.025]].map(p=>this.project(p,this.buttonGroup))}];
+  const zones=[{kind:'move',points:[[-.11,-.11,.025],[.11,-.11,.025],[.11,.11,.025],[-.11,.11,.025]].map(p=>this.project(p,this.buttonGroup))},{kind:'limit',points:[[-.69,-.2,.11],[.69,-.2,.11],[.69,.25,.11],[-.69,.25,.11]].map(p=>this.project(p,this.console))}];
   if(this.bloom){
    this.renderer.setRenderTarget(this.beauty);this.renderer.render(this.scene,this.camera);
    this.quad.material=this.blurMaterial;this.blurMaterial.uniforms.image.value=this.beauty.texture;this.blurMaterial.uniforms.stepSize.value.set(2/this.blurA.width,0);this.blurMaterial.uniforms.threshold.value=1;this.renderer.setRenderTarget(this.blurA);this.renderer.render(this.postScene,this.postCamera);

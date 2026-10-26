@@ -22,13 +22,18 @@
     if(value.note != null && (typeof value.note !== 'string' || value.note.length > 240)) throw Error('메모는 240자 이내로 입력해 주세요.');
     return {id: typeof value.id === 'string' && value.id.length < 120 ? value.id : uid(),type:value.type,name:value.name.trim(),amount:value.amount,at:value.at,icon:typeof value.icon === 'string' && value.icon.length <= 16 ? value.icon : value.type === 'meal' ? '🍚' : '🚶',note:value.note || ''};
   }
-  const empty = () => ({version:1,entries:[],drafts:[]});
+  function dailyLimit(value) {
+    if(value == null) return null;
+    if(!Number.isInteger(value) || value < 1 || value > 100000) throw Error('하루 한도는 1~100000 사이 정수로 입력해 주세요.');
+    return value;
+  }
+  const empty = () => ({version:1,entries:[],drafts:[],dailyLimit:null});
   function parse(text) {
     const value = JSON.parse(text);
     if(value?.version !== 1 || !Array.isArray(value.entries) || value.entries.length > 20000 || (value.drafts != null && (!Array.isArray(value.drafts) || value.drafts.length > 2000))) throw Error('지원하는 기록 파일이 아니에요.');
     const entries = value.entries.map(record), drafts = (value.drafts || []).map(record);
     if(new Set(entries.map(x=>x.id)).size !== entries.length) throw Error('중복된 기록 ID가 있어요.');
-    return {version:1,entries,drafts};
+    return {version:1,entries,drafts,dailyLimit:dailyLimit(value.dailyLimit)};
   }
   function load(storage) {
     try {
@@ -42,18 +47,22 @@
         const t = x.eatenAt && Number.isFinite(new Date(x.eatenAt).getTime()) ? localTime(new Date(x.eatenAt)) : /^\d{4}-\d\d-\d\d$/.test(x.day || '') ? `${x.day}T12:00` : localTime();
         return record({id:`legacy-${x.id || uid()}`,type:'meal',name:x.name,amount:Number(x.kcal),at:t,icon:x.icon,note:String(x.feeling || (draft ? '이전 식탁에 남겨 둔 메모' : '')).slice(0,240)});
       };
-      return {doc:{version:1,entries:legacy.entries.map(x=>convert(x)),drafts:(legacy.pending || []).map(x=>convert(x,true))},migrated:true};
+      return {doc:{version:1,entries:legacy.entries.map(x=>convert(x)),drafts:(legacy.pending || []).map(x=>convert(x,true)),dailyLimit:null},migrated:true};
     } catch(error) { return {doc:empty(),migrated:false,error:error.message}; }
   }
   const summary = entries => entries.reduce((s,e) => { if(e.type==='meal'){s.meals++;s.kcal+=e.amount;}else{s.moves++;s.minutes+=e.amount;} return s; },{meals:0,kcal:0,moves:0,minutes:0});
   const forDay = (entries,date) => entries.filter(e=>e.at.slice(0,10)===date).sort((a,b)=>a.at.localeCompare(b.at));
+  function meter(document,date) {
+    const consumed=summary(forDay(document.entries,date)).kcal,limit=dailyLimit(document.dailyLimit);
+    return {consumed,limit,label:consumed+' / '+(limit ?? '—')};
+  }
   function merge(a,b) {
     const byId = new Map(a.entries.map(x=>[x.id,x]));
     // Existing records win; importing the same backup twice does not duplicate it.
     for(const item of b.entries) if(!byId.has(item.id)) byId.set(item.id,item);
     const drafts = new Map((a.drafts||[]).map(x=>[x.id,x]));
     for(const item of b.drafts||[]) if(!drafts.has(item.id)) drafts.set(item.id,item);
-    return {version:1,entries:[...byId.values()],drafts:[...drafts.values()]};
+    return {version:1,entries:[...byId.values()],drafts:[...drafts.values()],dailyLimit:dailyLimit(a.dailyLimit ?? b.dailyLimit)};
   }
   function demo() {
     const result = empty();
@@ -63,5 +72,5 @@
     }
     return result;
   }
-  globalThis.Diary = {KEY,LEGACY_KEY,uid,localTime,day,validTime,record,empty,parse,load,summary,forDay,merge,demo};
+  globalThis.Diary = {KEY,LEGACY_KEY,uid,localTime,day,validTime,record,empty,parse,load,summary,forDay,dailyLimit,meter,merge,demo};
 })();

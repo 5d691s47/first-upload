@@ -23,3 +23,17 @@ test('import is additive and idempotent, and never overwrites an existing edit',
 test('broken storage is reported without erasing it; local dates filter independently',()=>{
  const result=D.load({getItem:()=>'{broken'});assert.ok(result.error);assert.equal(result.doc.entries.length,0);assert.equal(D.forDay([food(),movement()],'2026-10-26').length,2);assert.equal(D.forDay([food()],'2026-10-25').length,0);
 });
+
+test('daily calorie limit is optional for old backups and survives export and import',()=>{
+ const legacyDocument=D.parse(JSON.stringify({version:1,entries:[food()]}));assert.equal(legacyDocument.dailyLimit,null);assert.equal(legacyDocument.entries.length,1);
+ const configured={...legacyDocument,dailyLimit:1000};assert.equal(D.parse(JSON.stringify(configured)).dailyLimit,1000);
+ assert.equal(D.merge(configured,{...D.empty(),dailyLimit:2000}).dailyLimit,1000);
+ assert.equal(D.merge(D.empty(),configured).dailyLimit,1000);
+ for(const value of [0,-1,1.5,'1000',100001])assert.throws(()=>D.dailyLimit(value));
+});
+test('calorie meter sums only meals on the selected day and does not cap consumption',()=>{
+ const a={...food(),amount:125},b={...movement(),amount:30},yesterday={...food(),id:'yesterday',at:'2026-10-25T12:30',amount:900};
+ const doc={...D.empty(),entries:[a,b,yesterday],dailyLimit:1000};assert.deepEqual(D.meter(doc,'2026-10-26'),{consumed:125,limit:1000,label:'125 / 1000'});
+ assert.equal(D.meter(doc,'2026-10-25').consumed,900);assert.equal(D.meter(doc,'2026-10-27').consumed,0);
+ assert.equal(D.meter({...doc,dailyLimit:100},'2026-10-26').label,'125 / 100');
+});

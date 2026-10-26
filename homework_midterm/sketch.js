@@ -23,7 +23,7 @@ function persist(target=doc()){
   catch{storageBlocked=true;text('storageStatus','저장 불가 · 내보내기로 보관해 주세요.');notify('자동 저장을 사용할 수 없어요. 기록을 내보내 주세요.');return false;}
 }
 function render(){
-  const s=D.summary(rows());text('mealCount',String(s.meals).padStart(2,'0'));text('moveMinutes',String(s.minutes).padStart(2,'0'));text('foodEnergy',format(s.kcal));text('exerciseCount',s.moves);text('machineDate',selectedDate);
+  const s=D.summary(rows());text('mealCount',String(s.meals).padStart(2,'0'));text('moveMinutes',String(s.minutes).padStart(2,'0'));text('foodEnergy',format(s.kcal));text('exerciseCount',s.moves);text('machineDate',selectedDate);text('calorieMeter',D.meter(doc(),selectedDate).label+' kcal');
   $('archiveDate').value=selectedDate;$('demoBanner').hidden=!demoMode;$('demoButton').setAttribute('aria-pressed',String(demoMode));text('demoButton',demoMode?'내 기록':'예시');
   text('storageStatus',demoMode?'예시 공간 · 내 기록과 분리돼요.':storageBlocked?'저장 불가 · 내보내기로 보관해 주세요.':'이 브라우저에 보관돼요.');
   renderPending();renderPeek();renderArchive();draw();
@@ -86,6 +86,14 @@ $('addMeal').addEventListener('click',()=>openEditor('meal'));$('addMove').addEv
 $('editPeek').addEventListener('click',()=>{const e=doc().entries.find(x=>x.id===selectedId);if(e)openEditor(e.type,e);});$('closePeek').addEventListener('click',()=>{peekVisible=false;renderPeek();});
 $('legacyDraftButton').addEventListener('click',()=>{const e=doc().drafts[0];if(e)openEditor('meal',null,e);});
 $('deleteEntry').addEventListener('click',()=>$('confirmDialog').showModal());$('confirmDelete').addEventListener('click',()=>{const id=editing;$('confirmDialog').close();$('entryDialog').close();removeRecord(id);});
+function openLimitDialog(){
+  stopMotion();resetPointers();$('calorieLimit').value=doc().dailyLimit??'';$('clearLimit').hidden=doc().dailyLimit==null;text('limitError','');previewLimit();
+  if(!$('limitDialog').open)$('limitDialog').showModal();
+}
+function previewLimit(){const raw=$('calorieLimit').value,value=Number(raw);text('limitPreview',D.meter(doc(),selectedDate).consumed+' / '+(raw&&Number.isInteger(value)&&value>0&&value<=100000?value:'—'));}
+$('limitButton').addEventListener('click',openLimitDialog);$('calorieLimit').addEventListener('input',previewLimit);
+$('limitForm').addEventListener('submit',event=>{event.preventDefault();try{doc().dailyLimit=D.dailyLimit(Number($('calorieLimit').value));const saved=persist();$('limitDialog').close();render();if(saved)hint('하루 한도를 저장했어요. 식사를 새기면 숫자에 반영돼요.');}catch(error){text('limitError',error.message);}});
+$('clearLimit').addEventListener('click',()=>{doc().dailyLimit=null;const saved=persist();$('limitDialog').close();render();if(saved)hint('한도 설정을 해제했어요. 식사 기록은 그대로예요.');});
 $('helpButton').addEventListener('click',()=>{stopMotion();$('helpDialog').showModal();});
 for(const b of document.querySelectorAll('[data-close]'))b.addEventListener('click',()=>$(b.dataset.close).close());
 $('entryDialog').addEventListener('close',()=>{photoVersion++;photoController?.abort();});
@@ -146,8 +154,8 @@ function drawLegacy(){
   poly([[251,120],[369,89],[410,139],[286,174]],gradient(250,100,400,175,[[0,'#9da8b0'],[.15,'#3b454e'],[.85,'#0e151c'],[1,'#88949e']]),'#b8c8d455',1);
   poly([[264,122],[364,97],[392,135],[290,162]],'#04080c','#84939e66');
   const summary=D.summary(rows());
-  ctx.save();ctx.transform(1,-.27,.6,.87,283,130);label(`${String(summary.meals).padStart(2,'0')} / ${String(summary.minutes).padStart(2,'0')}`,0,0,17,'#eff6fc');label('MEALS     MIN',1,12,5.7,'#8699a9');ctx.restore();
-  ctx.beginPath();ctx.arc(395,151,9,0,Math.PI*2);ctx.fillStyle='#202a33';ctx.fill();ctx.strokeStyle='#aabcc966';ctx.stroke();label('↑',391,155,12,'#e3edf4');hitZones.push({kind:'move',points:[[382,137],[408,137],[408,164],[382,164]]});
+  ctx.save();ctx.transform(1,-.27,.6,.87,283,130);label(D.meter(doc(),selectedDate).label,0,0,13,'#eff6fc');label('KCAL / '+selectedDate.slice(5),1,12,5.7,'#8699a9');ctx.restore();
+  ctx.beginPath();ctx.arc(395,151,9,0,Math.PI*2);ctx.fillStyle='#202a33';ctx.fill();ctx.strokeStyle='#aabcc966';ctx.stroke();label('↑',391,155,12,'#e3edf4');hitZones.push({kind:'move',points:[[382,137],[408,137],[408,164],[382,164]]},{kind:'limit',points:[[264,122],[364,97],[392,135],[290,162]]});
   const list=[null,...rows().slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(beltPosition),fraction=beltPosition-base;
   const phase=animationOffset;
   const moveCount=rows().filter(e=>e.type==='move').length;
@@ -192,7 +200,7 @@ function draw(){
   if(!chromeRenderer){drawLegacy();return;}
   if(!width)return;
   ctx.clearRect(0,0,width,height);
-  const result=chromeRenderer.render({width,height,entries:rows(),pending,selectedId,position:beltPosition,gesture:gestureOffset,animation:animationOffset,extractedId,extractX,flash,idle:pointers.size===0&&!document.querySelector('dialog[open]'),reduceMotion});
+  const result=chromeRenderer.render({width,height,entries:rows(),calorieMeter:D.meter(doc(),selectedDate),date:selectedDate,pending,selectedId,position:beltPosition,gesture:gestureOffset,animation:animationOffset,extractedId,extractX,flash,idle:pointers.size===0&&!document.querySelector('dialog[open]'),reduceMotion});
   const convert=points=>points.map(([x,y])=>[(x-originX)/scale,(y-originY)/scale]);
   hitAreas=result.areas.map(a=>({...a,points:convert(a.points),frontPoints:a.frontPoints?convert(a.frontPoints):null}));hitZones=result.zones.map(a=>({...a,points:convert(a.points)}));
   if(holdPoint&&holdStart){const progress=clamp((performance.now()-holdStart)/520,0,1);ctx.beginPath();ctx.arc(holdPoint.x,holdPoint.y,19,-Math.PI/2,-Math.PI/2+Math.PI*2*progress);ctx.strokeStyle='#edf8ff';ctx.lineWidth=1.3;ctx.stroke();}
@@ -247,6 +255,7 @@ function endPointer(event,cancel=false){
   else if(!cancel&&!pending&&axis==='y'){if(performance.now()-lastTime<90)inertia(velocity);hint('손을 대면 멈춰요. 길게 누르면 기록을 열어요.');}
   else if(!cancel&&!dragMoved&&!pending){
     if(downHit?.kind==='move')openEditor('move');
+    else if(downHit?.kind==='limit')openLimitDialog();
     else if(downHit?.entry){selectedId=downHit.entry.id;peekVisible=true;renderPeek();hint('길게 눌러 수정 · 옆으로 밀어 분리');}
     else if(downHit){selectedId=null;peekVisible=false;renderPeek();hint('빈 계단을 길게 눌러 한 끼를 남겨요.');}
   }
@@ -266,6 +275,9 @@ new ResizeObserver(resize).observe(canvas);render();resize();
 let lastIdleFrame=0;
 function idleFrame(now){if(chromeRenderer&&!document.hidden&&now-lastIdleFrame>70&&!pointers.size&&!document.querySelector('dialog[open]')){lastIdleFrame=now;draw();}requestAnimationFrame(idleFrame);}
 if(chromeRenderer&&!reduceMotion)requestAnimationFrame(idleFrame);
+let lastCalendarDay=D.day();
+function refreshCalendarDay(){const current=D.day();if(current===lastCalendarDay)return;if(selectedDate===lastCalendarDay){selectedDate=current;beltPosition=0;selectedId=null;peekVisible=false;}lastCalendarDay=current;render();}
+setInterval(refreshCalendarDay,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshCalendarDay();});
 if(loaded.migrated){persist();notify('이전 기록과 식탁 메모를 가져왔어요.');}
 else if(loaded.error)notify('저장 데이터를 읽지 못해 원본을 보존했어요. 백업을 불러올 수 있어요.');
 hint('이름판이 있는 계단이 저장된 기록이에요. 눌러 확인하세요.',10000);
