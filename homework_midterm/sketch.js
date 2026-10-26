@@ -148,12 +148,12 @@ function drawLegacy(){
   const summary=D.summary(rows());
   ctx.save();ctx.transform(1,-.27,.6,.87,283,130);label(`${String(summary.meals).padStart(2,'0')} / ${String(summary.minutes).padStart(2,'0')}`,0,0,17,'#eff6fc');label('MEALS     MIN',1,12,5.7,'#8699a9');ctx.restore();
   ctx.beginPath();ctx.arc(395,151,9,0,Math.PI*2);ctx.fillStyle='#202a33';ctx.fill();ctx.strokeStyle='#aabcc966';ctx.stroke();label('↑',391,155,12,'#e3edf4');hitZones.push({kind:'move',points:[[382,137],[408,137],[408,164],[382,164]]});
-  const list=[null,...rows().slice().reverse()],base=Math.floor(beltPosition),fraction=beltPosition-base;
-  const phase=gestureOffset*.18+animationOffset;
+  const list=[null,...rows().slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(beltPosition),fraction=beltPosition-base;
+  const phase=animationOffset;
   const moveCount=rows().filter(e=>e.type==='move').length;
   for(let i=-1;i<=8;i++){
     const z=i-fraction+phase/43;if(z<-.05||z>7.05)continue;
-    const item=list[base+i],x=193+z*19,y=246+z*43,active=item?.id===selectedId;
+    const recordIndex=(((base+i)%cycleLength)+cycleLength)%cycleLength,item=list[recordIndex],x=193+z*19,y=246+z*43,active=item?.id===selectedId;
     const delta=item?.id===extractedId?extractX/scale:0;ctx.save();ctx.translate(delta,0);
     const top=[[x,y],[x+260,y-70],[x+282,y-45],[x+22,y+25]],front=[[x+22,y+25],[x+282,y-45],[x+282,y-24],[x+22,y+46]];
     if(delta){poly([[x-delta,y],[x+260-delta,y-70],[x+282-delta,y-24],[x+22-delta,y+46]],'#020305','#6d778244');}
@@ -171,7 +171,7 @@ function drawLegacy(){
       else if(moveCount){for(let j=0;j<Math.min(moveCount,5);j++)line([[x+29+j*11,y+28-j*3],[x+36+j*11,y+33-j*3]],'#a9c1d17a',1);}
     }else{
       hitAreas.push({points:top.map(([px,py])=>[px+delta,py]),entry:null,index:base+i});
-      if(base+i===0){ctx.save();ctx.transform(1,-.269,.72,.79,x+100,y-8);label('+',0,0,20,'#f0f7fbcc');label('PRESS / HOLD',28,-2,7,'#dae5ecaa');ctx.restore();}
+      if(recordIndex===0){ctx.save();ctx.transform(1,-.269,.72,.79,x+100,y-8);label('+',0,0,20,'#f0f7fbcc');label('PRESS / HOLD',28,-2,7,'#dae5ecaa');ctx.restore();}
     }
     if(flash>0&&item?.id===selectedId){ctx.globalAlpha=flash*.35;poly(top,'#f3faff',null);ctx.globalAlpha=1;}
     ctx.restore();
@@ -199,12 +199,12 @@ function draw(){
 }
 function animateStamp(direction){cancelAnimationFrame(stampFrame);if(reduceMotion){animationOffset=0;flash=0;draw();return;}const start=performance.now();function tick(now){const t=clamp((now-start)/520,0,1);animationOffset=direction*43*(1-Math.pow(1-t,3));flash=1-t;draw();if(t<1)stampFrame=requestAnimationFrame(tick);else{animationOffset=0;flash=0;draw();}}stampFrame=requestAnimationFrame(tick);}
 function stopMotion(){cancelAnimationFrame(motionFrame);motionFrame=0;}
-function inertia(velocity){stopMotion();if(reduceMotion||Math.abs(velocity)<.012)return;let last=performance.now();function tick(now){const delta=Math.min(32,now-last);last=now;velocity*=Math.pow(.92,delta/16);const max=rows().length,next=clamp(beltPosition+velocity*delta/16,0,max);if(next===0||next===max)velocity*=.4;beltPosition=next;draw();if(Math.abs(velocity)>.003)motionFrame=requestAnimationFrame(tick);else motionFrame=0;}motionFrame=requestAnimationFrame(tick);}
+function inertia(velocity){stopMotion();if(reduceMotion||Math.abs(velocity)<.012)return;let last=performance.now();function tick(now){const delta=Math.min(32,now-last);last=now;velocity*=Math.pow(.88,delta/16);beltPosition+=velocity*delta/16;draw();if(Math.abs(velocity)>.003)motionFrame=requestAnimationFrame(tick);else motionFrame=0;}motionFrame=requestAnimationFrame(tick);}
 function inside(point,points){let yes=false;for(let i=0,j=points.length-1;i<points.length;j=i++){const [xi,yi]=points[i],[xj,yj]=points[j];if(((yi>point.y)!==(yj>point.y))&&(point.x<(xj-xi)*(point.y-yi)/(yj-yi)+xi))yes=!yes;}return yes;}
 function localPoint(event){const r=canvas.getBoundingClientRect();return {x:(event.clientX-r.left-originX)/scale,y:(event.clientY-r.top-originY)/scale};}
 function pick(event){const point=localPoint(event);return hitZones.find(h=>inside(point,h.points))||hitAreas.slice().reverse().find(h=>inside(point,h.points))||null;}
 function clearHold(){clearTimeout(holdTimer);cancelAnimationFrame(holdFrame);holdStart=0;holdPoint=null;}
-const pointers=new Map();let startX=0,startY=0,startPosition=0,lastY=0,lastTime=0,velocity=0,axis=null,downHit=null,holdFired=false,pinching=false,pinchDistance=0,pinchOpen=false,dragMoved=false;
+const pointers=new Map();let startX=0,startY=0,startPosition=0,lastY=0,lastTime=0,velocity=0,dragStepPitch=68,axis=null,downHit=null,holdFired=false,pinching=false,pinchDistance=0,pinchOpen=false,dragMoved=false;
 function resetPointers(){for(const id of pointers.keys()){try{if(canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);}catch{}}pointers.clear();pinching=false;clearHold();gestureOffset=0;extractX=0;extractedId=null;}
 window.addEventListener('blur',()=>{resetPointers();stopMotion();draw();});
 const threshold=()=>Math.min(135,height*.22),deleteThreshold=()=>Math.min(135,width*.28);
@@ -212,7 +212,7 @@ const distance=()=>{const p=[...pointers.values()];return Math.hypot(p[0].x-p[1]
 canvas.addEventListener('pointerdown',event=>{
   if(event.pointerType==='mouse'&&event.button!==0)return;stopMotion();cancelAnimationFrame(stampFrame);animationOffset=0;flash=0;
   try{canvas.setPointerCapture(event.pointerId);}catch{}pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
-  if(pointers.size===1){startX=event.clientX;startY=lastY=event.clientY;lastTime=performance.now();velocity=0;startPosition=beltPosition;axis=null;downHit=pick(event);dragMoved=false;holdFired=false;pinching=false;extractX=0;extractedId=null;
+  if(pointers.size===1){startX=event.clientX;startY=lastY=event.clientY;lastTime=performance.now();velocity=0;startPosition=beltPosition;axis=null;downHit=pick(event);dragStepPitch=downHit?.pitch||Math.max(24,43*scale);dragMoved=false;holdFired=false;pinching=false;extractX=0;extractedId=null;
     if(!pending&&downHit&&!downHit.kind){holdStart=performance.now();const r=canvas.getBoundingClientRect();holdPoint={x:event.clientX-r.left,y:event.clientY-r.top};
       function ring(){draw();if(holdStart)holdFrame=requestAnimationFrame(ring);}holdFrame=requestAnimationFrame(ring);
       holdTimer=setTimeout(()=>{holdFired=true;const entry=downHit?.entry;clearHold();openEditor(entry?.type||'meal',entry||null);draw();},520);
@@ -231,8 +231,9 @@ canvas.addEventListener('pointermove',event=>{
     extractedId=downHit.entry.id;selectedId=extractedId;peekVisible=false;extractX=clamp(dx,-220,220);renderPeek();hint(Math.abs(dx)>=deleteThreshold()?'손을 떼면 기록이 분리돼요.':'옆으로 빼내기 · 놓으면 돌아가요.',0);draw();return;
   }
   if(axis==='y'){
+    beltPosition=startPosition-dy/dragStepPitch;
     if(pending){gestureOffset=clamp(dy,-threshold(),threshold());const signed=pending.type==='meal'?dy:-dy,ratio=clamp(signed/threshold(),0,1);$('gestureProgress').style.width=`${ratio*100}%`;hint(signed< -12?(pending.type==='meal'?'한 끼는 아래로 ↓':'운동은 위로 ↑'):ratio>=1?'손을 떼면 새겨져요.':pending.type==='meal'?'아래로 밀어 주세요. ↓':'위로 밀어 주세요. ↑',0);}
-    else{beltPosition=clamp(startPosition-dy/68,0,rows().length);velocity=-(event.clientY-lastY)/68/(Math.max(1,now-lastTime)/16);peekVisible=false;renderPeek();}
+    else{velocity=clamp(-(event.clientY-lastY)/dragStepPitch/(Math.max(1,now-lastTime)/16),-.65,.65);peekVisible=false;renderPeek();}
     lastY=event.clientY;lastTime=now;draw();
   }
 });
@@ -267,5 +268,5 @@ function idleFrame(now){if(chromeRenderer&&!document.hidden&&now-lastIdleFrame>7
 if(chromeRenderer&&!reduceMotion)requestAnimationFrame(idleFrame);
 if(loaded.migrated){persist();notify('이전 기록과 식탁 메모를 가져왔어요.');}
 else if(loaded.error)notify('저장 데이터를 읽지 못해 원본을 보존했어요. 백업을 불러올 수 있어요.');
-hint('빈 계단을 길게 눌러 시작하세요.',10000);
+hint('계단을 잡고 위아래로 밀어 보세요. 길게 누르면 기록해요.',10000);
 })();

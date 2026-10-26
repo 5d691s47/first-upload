@@ -100,18 +100,19 @@ class ChromeMachine {
  render(state){
   if(this.lost)return {areas:[],zones:[]};this.resize(state.width,state.height);
   const now=performance.now();if(state.idle&&!state.reduceMotion)this.pose=Math.sin(now*.00016)*.027;this.machine.rotation.y=this.pose;
-  const entries=state.entries,list=[null,...entries.slice().reverse()],base=Math.floor(state.position),fraction=state.position-base;const areas=[];
+  const entries=state.entries,list=[null,...entries.slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(state.position),fraction=state.position-base;const areas=[];
   const meals=entries.filter(e=>e.type==='meal').length,minutes=entries.filter(e=>e.type==='move').reduce((n,e)=>n+e.amount,0),consoleKey=meals+'/'+minutes;
   if(this.consoleKey!==consoleKey){this.consoleKey=consoleKey;const c=this.consoleCanvas.getContext('2d');c.clearRect(0,0,512,192);c.fillStyle='#c8d5df';c.font='52px monospace';c.textAlign='center';c.fillText(String(meals).padStart(2,'0')+' / '+String(minutes).padStart(2,'0'),256,103);c.fillStyle='#6c7e8e';c.font='14px monospace';c.fillText('B I T E   /   S T R I D E',256,150);this.consoleTexture.needsUpdate=true;}
   for(let k=0;k<this.steps.length;k++){
-   const slot=this.steps[k],i=k-1,z=i-fraction+(state.gesture+state.animation/.18)*.18/43,item=list[base+i];slot.group.visible=z>=-.08&&z<=7.08;if(!slot.group.visible)continue;
+   const slot=this.steps[k],i=k-1,z=i-fraction+state.animation/43,recordIndex=(((base+i)%cycleLength)+cycleLength)%cycleLength,item=list[recordIndex];slot.group.visible=z>-.65&&z<7.65;if(!slot.group.visible)continue;
+   const edge=Math.max(0,Math.min(1,(z+.65)/.65,(7.65-z)/.65));slot.group.scale.set(1,edge,edge);slot.group.rotation.x=z<0?Math.min(.85,-z*1.2):z>7?-Math.min(.85,(z-7)*1.2):0;
    const x=item?.id===state.extractedId?state.extractX/(this.width<700?90:155):0;
    slot.group.position.set(x,2.94-z*.305,-1.86+z*.43);
    const active=item?.id===state.selectedId;
    const key=item?`${item.id}:${item.name}:${item.at}:${active}:${state.flash>.3}`:`empty:${base+i}`;
    if(key!==slot.key){slot.key=key;const c=slot.canvas.getContext('2d');c.clearRect(0,0,512,128);c.fillStyle=active?'#f5faff':'#b9c7d1';
-    if(item){c.font=active?'23px sans-serif':'17px monospace';c.textAlign='left';c.fillText(active?item.name.slice(0,18):String(base+i).padStart(2,'0'),28,76);c.font='16px monospace';c.textAlign='right';c.fillText(item.type==='meal'?'↓':'↑',480,76);}
-    else if(base+i===0){c.font='38px sans-serif';c.textAlign='center';c.fillText('+',256,83);}slot.texture.needsUpdate=true;
+    if(item){c.font=active?'23px sans-serif':'17px monospace';c.textAlign='left';c.fillText(active?item.name.slice(0,18):String(recordIndex).padStart(2,'0'),28,76);c.font='16px monospace';c.textAlign='right';c.fillText(item.type==='meal'?'↓':'↑',480,76);}
+    else if(recordIndex===0){c.font='38px sans-serif';c.textAlign='center';c.fillText('+',256,83);}slot.texture.needsUpdate=true;
    }
    slot.writing.material.opacity=active ? .85 : .3;
    areas.push({group:slot.group,entry:item||null,index:base+i});
@@ -119,7 +120,7 @@ class ChromeMachine {
   this.pendingGroup.visible=Boolean(state.pending);
   if(state.pending){this.pendingGroup.position.set(0,3.2+state.gesture*.0024,-1.55+state.gesture*.001);const key=state.pending.id;if(this.pendingKey!==key){this.pendingKey=key;const c=this.pendingCanvas.getContext('2d');c.clearRect(0,0,512,128);c.fillStyle='#f3f8fc';c.font='34px sans-serif';c.textAlign='center';c.fillText((state.pending.type==='meal'?'↓ ':'↑ ')+state.pending.name.slice(0,12),256,83);this.pendingTexture.needsUpdate=true;}}
   this.scene.updateMatrixWorld(true);this.camera.updateMatrixWorld(true);
-  const projected=areas.map(a=>({entry:a.entry,index:a.index,points:[[-1.31,.165,-.222],[1.31,.165,-.222],[1.31,.165,.222],[-1.31,.165,.222]].map(p=>this.project(p,a.group))}));
+  const projected=areas.map(a=>{const center=this.project([0,.165,0],a.group),next=this.project([0,.165-.305,.43],a.group);return {entry:a.entry,index:a.index,pitch:Math.max(18,Math.abs(next[1]-center[1])),points:[[-1.31,.165,-.222],[1.31,.165,-.222],[1.31,.165,.222],[-1.31,.165,.222]].map(p=>this.project(p,a.group))};});
   const zones=[{kind:'move',points:[[-.11,-.11,.025],[.11,-.11,.025],[.11,.11,.025],[-.11,.11,.025]].map(p=>this.project(p,this.buttonGroup))}];
   if(this.bloom){
    this.renderer.setRenderTarget(this.beauty);this.renderer.render(this.scene,this.camera);
