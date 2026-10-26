@@ -70,7 +70,7 @@ class ChromeMachine {
    // Recorded treads have a high-contrast inset nameplate; empty chrome stays unmarked.
    const surfaceCanvas=document.createElement('canvas');surfaceCanvas.width=1024;surfaceCanvas.height=128;const texture=new T.CanvasTexture(surfaceCanvas);texture.colorSpace=T.SRGBColorSpace;
    const writing=new T.Mesh(new T.PlaneGeometry(2.15,.24),new T.MeshBasicMaterial({map:texture,transparent:true,opacity:.55,depthWrite:false,toneMapped:false}));writing.position.set(0,0,.248);group.add(writing);
-   this.machine.add(group);this.steps.push({group,canvas:surfaceCanvas,texture,writing,key:''});
+   this.machine.add(group);this.steps.push({group,body,top,nose,ribs,canvas:surfaceCanvas,texture,writing,key:''});
   }
   const boltGeo=new T.SphereGeometry(.028,12,8);for(const x of [-1.3,1.3]){const b=new T.Mesh(boltGeo,this.chrome);b.scale.z=.35;b.position.set(x,.27,1.89);this.machine.add(b);}
   this.pendingGroup=new T.Group();this.machine.add(this.pendingGroup);this.box(1.28,.025,.34,this.chrome,[0,0,0],this.pendingGroup,.007);
@@ -98,26 +98,34 @@ class ChromeMachine {
   if(this.bloom){const w=Math.floor(width*dpr),h=Math.floor(height*dpr);this.beauty.setSize(w,h);this.blurA.setSize(Math.max(1,w>>1),Math.max(1,h>>1));this.blurB.setSize(Math.max(1,w>>1),Math.max(1,h>>1));this.finalMaterial.uniforms.pixel.value.set(1/w,1/h);}
  }
  project(point,group=this.machine){const v=new T.Vector3(...point);group.localToWorld(v);v.project(this.camera);return [(v.x+1)*this.width/2,(1-v.y)*this.height/2];}
- detachTread(id){
+ shatterTread(id,direction=1){
   const slot=this.steps.find(s=>s.group.visible&&s.entryId===id);if(!slot)return null;
-  const group=slot.group.clone(true);group.scale.set(1,1,1);const textures=[];
-  group.traverse(node=>{if(!node.material)return;node.material=node.material.clone();node.material.transparent=true;node.material.depthWrite=false;if(node.material.map===slot.texture){const copy=document.createElement('canvas');copy.width=slot.canvas.width;copy.height=slot.canvas.height;copy.getContext('2d').drawImage(slot.canvas,0,0);node.material.map=new T.CanvasTexture(copy);node.material.map.colorSpace=T.SRGBColorSpace;textures.push(node.material.map);}});
-  const start=group.position.clone(),target=new T.Vector3(start.x*.45,.2,2.25),duration=Math.max(.38,Math.min(.82,Math.sqrt(Math.max(.1,start.y-.2)/5)));
-  this.machine.add(group);this.machine.updateMatrixWorld(true);const screenStart=this.project([0,-.1,0],group),screenFloor=this.project([target.x,.15,target.z]);
-  this.falling.push({group,start,target,duration,born:performance.now(),textures});
+  direction=direction>=0?1:-1;const group=new T.Group(),geometries=[],shards=[],count=this.width<700?10:14,segment=2.61/count;
+  for(let i=0;i<count;i++){
+   const height=.15+(i%4)*.022,geometry=this.roundedBox(segment*.91,height,.43,.018),material=(i%3===0?this.darkChrome:this.treadChrome).clone();
+   material.transparent=true;material.depthWrite=false;const mesh=new T.Mesh(geometry,material),x=-1.305+segment*(i+.5);
+   mesh.position.set(x,(i%2)*.018,0);mesh.userData={base:mesh.position.clone(),seed:(i*37%17)/17,index:i};group.add(mesh);geometries.push(geometry);shards.push(mesh);
+  }
+  const start=slot.group.position.clone();group.position.copy(start);group.rotation.copy(slot.group.rotation);group.scale.copy(slot.group.scale);
+  const target=new T.Vector3(start.x+direction*.72,.2,2.18),duration=Math.max(.48,Math.min(.72,Math.sqrt(Math.max(.1,start.y-.2)/5)));
+  this.machine.add(group);this.machine.updateMatrixWorld(true);const screenStart=this.project([direction*1.05,-.08,0],group),screenFloor=this.project([target.x,.12,target.z]);
+  this.falling.push({group,start,target,duration,born:performance.now(),geometries,shards,direction});
   while(this.falling.length>3)this.disposeFall(this.falling.shift());
-  return {start:{x:screenStart[0],y:screenStart[1]},floor:{x:screenFloor[0],y:screenFloor[1]},duration};
+  return {start:{x:screenStart[0],y:screenStart[1]},floor:{x:screenFloor[0],y:screenFloor[1]},duration,direction};
  }
- disposeFall(fall){this.machine.remove(fall.group);fall.group.traverse(node=>{node.material?.dispose();if(node.isInstancedMesh)node.dispose();});for(const texture of fall.textures)texture.dispose();}
+ disposeFall(fall){this.machine.remove(fall.group);fall.group.traverse(node=>node.material?.dispose());for(const geometry of fall.geometries||[])geometry.dispose();for(const texture of fall.textures||[])texture.dispose();}
  cancelFalls(){for(const fall of this.falling)this.disposeFall(fall);this.falling=[];}
  updateFalls(now){
   this.falling=this.falling.filter(fall=>{
    const age=(now-fall.born)/1000,t=Math.min(1,age/fall.duration),ease=t*t*(3-2*t);
-   fall.group.position.set(fall.start.x+(fall.target.x-fall.start.x)*t,fall.start.y+(fall.target.y-fall.start.y)*t*t,fall.start.z+(fall.target.z-fall.start.z)*ease);
-   const after=Math.max(0,age-fall.duration);fall.group.rotation.x=t<1?Math.sin(t*Math.PI)*.32:0;fall.group.rotation.z=t<1?Math.sin(t*Math.PI)*.1:0;
-   if(after>0)fall.group.position.y+=Math.abs(Math.sin(after*18))*.045*Math.exp(-after*9);
-   const opacity=age<fall.duration+.13?1:Math.max(0,1-(age-fall.duration-.13)/.32);fall.group.traverse(node=>{if(node.material)node.material.opacity=opacity;});
-   if(age>fall.duration+.46){this.disposeFall(fall);return false;}return true;
+   if(age>=fall.duration){this.disposeFall(fall);return false;}
+   fall.group.position.set(fall.start.x+(fall.target.x-fall.start.x)*ease,fall.start.y+(fall.target.y-fall.start.y)*t*t,fall.start.z+(fall.target.z-fall.start.z)*ease);
+   for(const shard of fall.shards){const {base,seed,index}=shard.userData,spread=(.18+seed*.5)*t;
+    shard.position.set(base.x+fall.direction*spread+(index-(fall.shards.length-1)/2)*t*.018,base.y-(.12+seed*.42)*t*t,base.z+(seed-.5)*t*.48);
+    shard.rotation.set((seed-.5)*t*3.5,fall.direction*(seed-.5)*t*2.4,fall.direction*(.22+seed*.65)*t);
+    shard.material.opacity=t<.5?1:Math.max(0,1-(t-.5)*2);
+   }
+   return true;
   });
  }
  render(state){
@@ -136,6 +144,10 @@ class ChromeMachine {
    const edge=Math.max(0,Math.min(1,(z+.65)/.65,(7.65-z)/.65));slot.group.scale.set(1,edge,edge);slot.group.rotation.x=z<0?Math.min(.85,-z*1.2):z>7?-Math.min(.85,(z-7)*1.2):0;
    const x=item?.id===state.extractedId?state.extractX/(this.width<700?90:155):0;
    slot.group.position.set(x,2.94-z*.305,-1.86+z*.43);
+   const fracture=item?.id===state.extractedId?Math.max(0,Math.min(1,state.fracture||0)):0,side=(state.fractureDirection||1)>=0?1:-1;
+   slot.body.position.set(side*.04*fracture,0,0);slot.body.rotation.z=side*.035*fracture;slot.top.position.set(side*.18*fracture,.125+.035*fracture,-.02*fracture);slot.top.rotation.z=side*.09*fracture;
+   slot.nose.position.set(side*.36*fracture,.13-.08*fracture,.219);slot.nose.rotation.z=side*.26*fracture;slot.ribs.position.set(-side*.13*fracture,-.08*fracture,.05*fracture);slot.ribs.rotation.z=-side*.17*fracture;
+   slot.writing.position.set(side*.24*fracture,-.09*fracture,.248+.03*fracture);slot.writing.rotation.z=side*.14*fracture;
    slot.entryId=item?.id||null;const active=item?.id===state.selectedId;
    const key=item?`${item.id}:${item.name}:${item.at}:${active}:${state.flash>.3}`:`empty:${base+i}`;
    if(key!==slot.key){
@@ -150,7 +162,7 @@ class ChromeMachine {
     }else if(recordIndex===0){c.fillStyle='#e8f6ff';c.font='65px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillText('+',512,67);}
     slot.texture.needsUpdate=true;
    }
-   slot.writing.material.opacity=item?1:.55;
+   slot.writing.material.opacity=item?1-fracture*.94:.55;
    areas.push({group:slot.group,entry:item||null,index:base+i});
   }
   this.pendingGroup.visible=Boolean(state.pending);

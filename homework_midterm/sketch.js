@@ -204,7 +204,7 @@ $('analyzeButton').addEventListener('click',async()=>{
 
 // Locally drawn metal: gradients, bevels, brushed ribs, and specular handrails.
 const canvas=$('machine'),ctx=canvas.getContext('2d');
-const sparkFX=globalThis.SparkEffects?new SparkEffects($('sparkCanvas'),{reducedMotion:reduceMotion,onImpact:()=>clickSound(true)}):null;
+const sparkFX=globalThis.SparkEffects?new SparkEffects($('sparkCanvas'),{reducedMotion:reduceMotion,onImpact:()=>{clickSound(true);const ac=soundContext();if(ac)metalNoise(ac,.21,.035,2600);}}):null;
 let width=0,height=0,scale=1,originX=0,originY=0,beltPosition=0,gestureOffset=0,extractX=0,extractedId=null;
 let animationOffset=0,flash=0,stampFrame=0,motionFrame=0,holdFrame=0,holdTimer=0,holdStart=0,holdPoint=null,hitAreas=[],hitZones=[];
 let chromeRenderer=null;
@@ -276,7 +276,7 @@ function draw(){
   if(!chromeRenderer){drawLegacy();return;}
   if(!width)return;
   ctx.clearRect(0,0,width,height);
-  const result=chromeRenderer.render({width,height,entries:beltRows(),calorieMeter:D.meter(doc(),selectedDate),date:selectedDate,pending,selectedId,position:beltPosition+automaticBeltOffset(),error:Boolean(errorState?.active),gesture:gestureOffset,animation:animationOffset,extractedId,extractX,flash,idle:pointers.size===0&&!document.querySelector('dialog[open]'),reduceMotion});
+  const result=chromeRenderer.render({width,height,entries:beltRows(),calorieMeter:D.meter(doc(),selectedDate),date:selectedDate,pending,selectedId,position:beltPosition+automaticBeltOffset(),error:Boolean(errorState?.active),gesture:gestureOffset,animation:animationOffset,extractedId,extractX,fracture:axis==='x'?clamp(Math.abs(extractX)/detachThreshold(),0,1):0,fractureDirection:extractX>=0?1:-1,flash,idle:pointers.size===0&&!document.querySelector('dialog[open]'),reduceMotion});
   const convert=points=>points.map(([x,y])=>[(x-originX)/scale,(y-originY)/scale]);
   hitAreas=result.areas.map(a=>({...a,points:convert(a.points),frontPoints:a.frontPoints?convert(a.frontPoints):null}));hitZones=result.zones.map(a=>({...a,points:convert(a.points)}));
   if(holdPoint&&holdStart){const progress=clamp((performance.now()-holdStart)/520,0,1);ctx.beginPath();ctx.arc(holdPoint.x,holdPoint.y,19,-Math.PI/2,-Math.PI/2+Math.PI*2*progress);ctx.strokeStyle='#edf8ff';ctx.lineWidth=1.3;ctx.stroke();}
@@ -327,16 +327,16 @@ function separationPoint(direction){
   return {x:originX+(pair[0][0]+pair[1][0])*.5*scale,y:originY+(pair[0][1]+pair[1][1])*.5*scale};
 }
 function separationScrape(dx){
-  const direction=dx>=0?1:-1,point=separationPoint(direction);if(!point)return;
-  const distance=Math.abs(dx-lastSparkDrag);if(distance<3)return;const strength=clamp(distance/22,.15,1);
-  if(sparkFX?.scrape(point,direction,strength))scrapeSound(strength);lastSparkDrag=dx;
+  const direction=dx>=0?1:-1,point=separationPoint(direction);if(!point)return;point.x+=dx;
+  const distance=Math.abs(dx-lastSparkDrag);if(distance<3)return;const speed=clamp(distance/22,.15,1),progress=clamp(Math.abs(dx)/detachThreshold(),0,1);
+  if(sparkFX?.scrape(point,direction,speed))scrapeSound(speed);if(progress>.16)sparkFX?.crumble(point,direction,progress);lastSparkDrag=dx;
 }
 function separationBurst(dx){
   const direction=dx>=0?1:-1,point=separationPoint(direction);
   if(!reduceMotion){
-    const fall=chromeRenderer?.detachTread(downHit?.entry?.id);
-    if(fall)sparkFX?.drop(fall.start,fall.floor,fall.duration);
-    else if(point)sparkFX?.drop({x:point.x,y:point.y+5},{x:width*.5+direction*width*.055,y:Math.min(height-130,height*.82)},.6);
+    const fall=chromeRenderer?.shatterTread(downHit?.entry?.id,direction);
+    if(fall)sparkFX?.shatter(fall.start,fall.floor,fall.duration,direction);
+    else if(point)sparkFX?.shatter({x:point.x+dx,y:point.y+5},{x:width*.5+direction*width*.055,y:Math.min(height-130,height*.82)},.58,direction);
   }
   detachSound();
 }
