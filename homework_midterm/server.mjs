@@ -1,8 +1,8 @@
-﻿// Node 20+ / 서버에서만 실행. 정적 파일은 명시한 파일만 제공한다.
+// Node 20+ / 서버에서만 실행. 정적 파일은 명시한 파일만 제공한다.
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 const port=Number(process.env.PORT||3000);
-const allowed=new Map([['/','index.html'],['/index.html','index.html'],['/sketch.js','sketch.js'],['/p5.min.js','p5.min.js']]);
+const allowed=new Map([['/','index.html'],['/index.html','index.html'],['/sketch.js','sketch.js'],['/diary.js','diary.js'],['/style.css','style.css']]);
 const send=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))};
 const limits=new Map();
 function permit(ip){const now=Date.now();for(const [key,v] of limits)if(now-v.start>60000)limits.delete(key);const v=limits.get(ip)||{start:now,count:0};v.count++;limits.set(ip,v);return v.count<=8}
@@ -29,7 +29,7 @@ export const server=http.createServer(async(req,res)=>{
  }
  if(!['GET','HEAD'].includes(req.method))return send(res,405,{error:'허용되지 않은 요청입니다.'});
  const file=allowed.get(path);if(!file)return send(res,404,{error:'페이지를 찾을 수 없어요.'});
- const content=await readFile(new URL(file,import.meta.url));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff'});res.end(req.method==='HEAD'?undefined:content);
+ const content=await readFile(new URL(file,import.meta.url));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff'});res.end(req.method==='HEAD'?undefined:content);
  }catch(error){send(res,500,{error:error.name==='TimeoutError'?'분석 시간이 초과됐어요. 다시 시도해 주세요.':'요청을 처리하지 못했어요. 다시 시도해 주세요.'})}
 });
-if(process.env.NODE_ENV!=='test')server.listen(port,()=>console.log(`Quokka diary: http://localhost:${port}`));
+if(process.env.NODE_ENV!=='test')server.listen(port,()=>console.log(`Bite / Stride: http://localhost:${port}`));
