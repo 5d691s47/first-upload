@@ -33,7 +33,31 @@ test('daily calorie limit is optional for old backups and survives export and im
 });
 test('calorie meter sums only meals on the selected day and does not cap consumption',()=>{
  const a={...food(),amount:125},b={...movement(),amount:30},yesterday={...food(),id:'yesterday',at:'2026-10-25T12:30',amount:900};
- const doc={...D.empty(),entries:[a,b,yesterday],dailyLimit:1000};assert.deepEqual(D.meter(doc,'2026-10-26'),{consumed:125,limit:1000,label:'125 / 1000'});
+ const doc={...D.empty(),entries:[a,b,yesterday],dailyLimit:1000};assert.deepEqual(D.meter(doc,'2026-10-26'),{consumed:125,burned:0,net:125,limit:1000,label:'125 / 1000'});
  assert.equal(D.meter(doc,'2026-10-25').consumed,900);assert.equal(D.meter(doc,'2026-10-27').consumed,0);
  assert.equal(D.meter({...doc,dailyLimit:100},'2026-10-26').label,'125 / 100');
+});
+
+
+test('first limit setup is free, three real edits are allowed, and fourth/clear are rejected',()=>{
+ const date='2026-10-26';let doc=D.changeLimit(D.empty(),1000,date);assert.equal(D.quota(doc,date).remaining,3);
+ const unchanged=D.changeLimit(doc,1000,date);assert.equal(D.quota(unchanged,date).count,0);
+ for(const value of [1100,900,1000])doc=D.changeLimit(doc,value,date);
+ assert.equal(D.quota(doc,date).count,3);assert.throws(()=>D.changeLimit(doc,2000,date));assert.throws(()=>D.changeLimit(doc,null,date));
+ const saved=D.parse(JSON.stringify(doc));assert.equal(D.quota(saved,date).remaining,0);assert.throws(()=>D.changeLimit(saved,2000,date));
+ assert.equal(D.quota(saved,'2026-10-27').remaining,3);const tomorrow=D.changeLimit(saved,1200,'2026-10-27');assert.equal(D.quota(tomorrow,'2026-10-27').count,1);
+});
+test('overload requires quota exhaustion AND net above limit; exercise recovers without deleting meals',()=>{
+ const date='2026-10-26';let doc=D.changeLimit(D.empty(),1000,date);doc.entries=[{...food(),amount:1250}];
+ assert.equal(D.overload(doc,date).active,false);for(const value of [1100,900,1000])doc=D.changeLimit(doc,value,date);
+ assert.equal(D.overload(doc,date).active,true);doc.entries.push(D.record({...movement(),burnedKcal:250}));
+ const restored=D.overload(doc,date);assert.equal(restored.active,false);assert.equal(restored.net,1000);assert.equal(restored.consumed,1250);assert.equal(restored.burned,250);assert.equal(doc.entries[0].amount,1250);assert.equal(D.quota(doc,date).remaining,0);
+ doc.entries[1].burnedKcal=200;assert.equal(D.overload(doc,date).active,true);assert.equal(D.overload(doc,'2026-10-27').active,false);
+});
+test('backup import preserves exhausted quota and validates exercise expenditure',()=>{
+ const date='2026-10-26';let doc=D.changeLimit(D.empty(),1000,date);for(const value of [1100,900,1000])doc=D.changeLimit(doc,value,date);
+ const imported=D.merge(doc,D.empty());assert.equal(D.quota(imported,date).remaining,0);
+ assert.equal(D.record(movement()).burnedKcal,0);for(const burnedKcal of [-1,1.5,100001,'250'])assert.throws(()=>D.record({...movement(),burnedKcal}));
+ assert.throws(()=>D.parse(JSON.stringify({...doc,limitEdits:{[date]:{count:4,initialized:true}}})));
+ const snapshot=D.parse(JSON.stringify({...doc,entries:[D.record({...movement(),burnedKcal:250})]}));assert.equal(snapshot.entries[0].burnedKcal,250);
 });

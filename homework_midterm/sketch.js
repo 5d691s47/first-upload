@@ -7,6 +7,7 @@ const loaded=D.load(storage);
 let personal=loaded.doc,sample=D.demo(),demoMode=false,storageBlocked=Boolean(loaded.error);
 let selectedDate=D.day(),selectedId=null,pending=null,editing=null,draftId=null,mode='meal',icon='🍚',peekVisible=false;
 let sound=false,audioContext,toastTimer,hintTimer,undoAction=null;
+let errorState=null,errorClock=0,errorOffset=0,errorLastTime=0,limitSaving=false;
 let photoData=null,photoVersion=0,analyzing=false,photoController;
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 const doc=()=>demoMode?sample:personal,rows=()=>D.forDay(doc().entries,selectedDate),unit=e=>e.type==='meal'?'kcal':'분';
@@ -26,7 +27,7 @@ function render(){
   const s=D.summary(rows());text('mealCount',String(s.meals).padStart(2,'0'));text('moveMinutes',String(s.minutes).padStart(2,'0'));text('foodEnergy',format(s.kcal));text('exerciseCount',s.moves);text('machineDate',selectedDate);text('calorieMeter',D.meter(doc(),selectedDate).label+' kcal');
   $('archiveDate').value=selectedDate;$('demoBanner').hidden=!demoMode;$('demoButton').setAttribute('aria-pressed',String(demoMode));text('demoButton',demoMode?'내 기록':'예시');
   text('storageStatus',demoMode?'예시 공간 · 내 기록과 분리돼요.':storageBlocked?'저장 불가 · 내보내기로 보관해 주세요.':'이 브라우저에 보관돼요.');
-  renderPending();renderPeek();renderArchive();draw();
+  updateErrorState();renderQuota();renderPending();renderPeek();renderArchive();draw();
 }
 function renderPending(){
   $('pendingCard').hidden=!pending;
@@ -34,7 +35,7 @@ function renderPending(){
 }
 function renderPeek(){
   const e=doc().entries.find(x=>x.id===selectedId);$('recordPeek').hidden=!peekVisible||!e||Boolean(pending);
-  if(e){text('peekTime',e.at.slice(11));text('peekName',e.name);text('peekAmount',`${format(e.amount)} ${unit(e)}`);}
+  if(e){text('peekTime',e.at.slice(11));text('peekName',e.name);text('peekAmount',e.type==='move'?`${format(e.amount)}분 · −${format(e.burnedKcal||0)} kcal`:`${format(e.amount)} kcal`);}
 }
 function renderArchive(){
   const entries=rows();text('archiveCount',`${entries.length} TRACES`);$('recordList').replaceChildren();
@@ -43,7 +44,7 @@ function renderArchive(){
     const b=el('button',`record-card ${e.type}${selectedId===e.id?' selected':''}`);b.type='button';b.dataset.id=e.id;b.setAttribute('aria-label',`${e.at.slice(11)} ${e.name}, ${e.amount}${unit(e)}, 수정`);
     const info=el('span','record-info'),time=el('time','',e.at.slice(11));time.dateTime=e.at;
     info.append(time,el('b','record-name',e.name));if(e.note)info.append(el('span','record-note-dot'));
-    b.append(el('span','record-arrow',e.type==='meal'?'↓':'↑'),info,el('span','record-meta',`${format(e.amount)} ${unit(e)}`));
+    b.append(el('span','record-arrow',e.type==='meal'?'↓':'↑'),info,el('span','record-meta',e.type==='move'?`${format(e.amount)}분 · −${format(e.burnedKcal||0)} kcal`:`${format(e.amount)} kcal`));
     b.addEventListener('click',()=>openEditor(e.type,e));$('recordList').append(b);
   }
   const inner=el('div','timeline-inner');
@@ -58,23 +59,24 @@ function openEditor(type,entry=null,draft=null){
   $('entryForm').reset();text('formError','');text('entryEyebrow',move?'STRIDE / REVERSE':'BITE / FORWARD');text('entryTitle',entry?'새겨 둔 순간.':move?'움직임을 새기기.':'한 끼를 새기기.');
   text('entryCopy',entry?'확인하고, 필요한 것만 고쳐 주세요.':move?'준비한 뒤 계단을 위로 밀어요.':'준비한 뒤 계단을 아래로 밀어요.');text('nameLabel',move?'운동':'음식');text('amountLabel',move?'시간 · 분':'kcal');
   $('entryName').placeholder=move?'어떻게 움직였나요?':'무엇을 먹었나요?';$('entryName').value=value?.name||'';$('entryAmount').min=move?'1':'0';$('entryAmount').max=move?'1440':'10000';$('entryAmount').value=value?.amount??'';$('entryTime').value=value?.at||D.localTime();$('entryNote').value=value?.note||'';
+  $('burnedField').hidden=!move;$('entryBurned').disabled=!move;$('entryBurned').required=move;$('entryBurned').value=move?(value?.burnedKcal??''):'';
   text('submitEntry',entry?'수정하기':move?'준비하기 ↑':'준비하기 ↓');$('deleteEntry').hidden=!entry;$('photoSection').hidden=move;$('photoSection').open=false;resetPhoto();
   if(!$('entryDialog').open)$('entryDialog').showModal();
 }
 $('entryForm').addEventListener('submit',event=>{
   event.preventDefault();try{
-    const e=D.record({id:editing||D.uid(),type:mode,name:$('entryName').value,amount:Number($('entryAmount').value),at:$('entryTime').value,note:$('entryNote').value,icon});
+    const e=D.record({id:editing||D.uid(),type:mode,name:$('entryName').value,amount:Number($('entryAmount').value),at:$('entryTime').value,note:$('entryNote').value,icon,burnedKcal:mode==='move'?Number($('entryBurned').value):undefined});
     if(editing){const index=doc().entries.findIndex(x=>x.id===editing);if(index<0)throw Error('기록을 다시 열어 주세요.');doc().entries[index]=e;selectedDate=e.at.slice(0,10);persist();hint('수정한 순간을 보관했어요.');}
     else{pending={...e,draftId};gestureOffset=0;peekVisible=false;hint(e.type==='meal'?'아래로 밀고 손을 떼면 새겨져요. ↓':'위로 밀고 손을 떼면 새겨져요. ↑',0);}
     $('entryDialog').close();render();if(!editing)canvas.focus({preventScroll:true});
   }catch(error){text('formError',error.message);}
 });
 function stamp(){
-  if(!pending)return;stopMotion();const e=D.record(pending),move=e.type==='move';
+  if(!pending)return;stopMotion();const wasError=errorState?.active;const e=D.record(pending),move=e.type==='move';
   if(!doc().entries.some(x=>x.id===e.id))doc().entries.push(e);if(pending.draftId)doc().drafts=doc().drafts.filter(x=>x.id!==pending.draftId);
   pending=null;selectedDate=e.at.slice(0,10);selectedId=e.id;peekVisible=false;beltPosition=0;gestureOffset=0;extractX=0;
   const saved=persist();render();animateStamp(move?-1:1);clickSound(move);$('gestureProgress').style.width='0%';
-  if(saved)hint(move?'움직임을 새겼어요. 식사 기록도 남아 있어요.':'한 끼가 새겨졌어요.');
+  if(saved)hint(wasError&&!errorState?.active?'정상 작동으로 돌아왔어요.':move?'운동과 소비 칼로리를 새겼어요.':'한 끼가 새겨졌어요.');
 }
 function removeRecord(id){
   const target=doc(),index=target.entries.findIndex(e=>e.id===id);if(index<0)return;
@@ -86,14 +88,44 @@ $('addMeal').addEventListener('click',()=>openEditor('meal'));$('addMove').addEv
 $('editPeek').addEventListener('click',()=>{const e=doc().entries.find(x=>x.id===selectedId);if(e)openEditor(e.type,e);});$('closePeek').addEventListener('click',()=>{peekVisible=false;renderPeek();});
 $('legacyDraftButton').addEventListener('click',()=>{const e=doc().drafts[0];if(e)openEditor('meal',null,e);});
 $('deleteEntry').addEventListener('click',()=>$('confirmDialog').showModal());$('confirmDelete').addEventListener('click',()=>{const id=editing;$('confirmDialog').close();$('entryDialog').close();removeRecord(id);});
+function renderQuota(){
+  const q=D.quota(doc(),D.day()),locked=q.remaining===0;
+  text('limitQuota',q.initialized?'오늘 수정 '+q.count+' / 3 · 남은 '+q.remaining+'회':'최초 설정 후 하루 3번 수정할 수 있어요.');
+  $('limitQuota').classList.toggle('exhausted',locked);$('calorieLimit').disabled=locked||limitSaving;$('saveLimit').disabled=locked||limitSaving;
+  text('saveLimit',locked?'오늘 수정 완료':limitSaving?'저장 중…':'설정하기');
+}
 function openLimitDialog(){
-  stopMotion();resetPointers();$('calorieLimit').value=doc().dailyLimit??'';$('clearLimit').hidden=doc().dailyLimit==null;text('limitError','');previewLimit();
+  stopMotion();resetPointers();$('calorieLimit').value=doc().dailyLimit??'';text('limitError','');renderQuota();previewLimit();
   if(!$('limitDialog').open)$('limitDialog').showModal();
 }
-function previewLimit(){const raw=$('calorieLimit').value,value=Number(raw);text('limitPreview',D.meter(doc(),selectedDate).consumed+' / '+(raw&&Number.isInteger(value)&&value>0&&value<=100000?value:'—'));}
+function previewLimit(){const raw=$('calorieLimit').value,value=Number(raw);text('limitPreview',D.meter(doc(),selectedDate).net+' / '+(raw&&Number.isInteger(value)&&value>0&&value<=100000?value:'—'));}
 $('limitButton').addEventListener('click',openLimitDialog);$('calorieLimit').addEventListener('input',previewLimit);
-$('limitForm').addEventListener('submit',event=>{event.preventDefault();try{doc().dailyLimit=D.dailyLimit(Number($('calorieLimit').value));const saved=persist();$('limitDialog').close();render();if(saved)hint('하루 한도를 저장했어요. 식사를 새기면 숫자에 반영돼요.');}catch(error){text('limitError',error.message);}});
-$('clearLimit').addEventListener('click',()=>{doc().dailyLimit=null;const saved=persist();$('limitDialog').close();render();if(saved)hint('한도 설정을 해제했어요. 식사 기록은 그대로예요.');});
+$('limitForm').addEventListener('submit',async event=>{
+  event.preventDefault();if(limitSaving)return;const value=Number($('calorieLimit').value);limitSaving=true;renderQuota();
+  try{
+    const commit=()=>{
+      if(!demoMode&&!storageBlocked){const latest=storage.getItem(D.KEY);if(latest)personal=D.parse(latest);}
+      const updated=D.changeLimit(doc(),value,D.day());if(demoMode)sample=updated;else personal=updated;
+      const saved=persist();$('limitDialog').close();render();if(saved&&!errorState.active)hint('한도를 저장했어요. 오늘 남은 수정 '+D.quota(doc()).remaining+'회.');
+    };
+    if(!demoMode&&navigator.locks?.request)await navigator.locks.request('bite-stride-limit',commit);else commit();
+  }catch(error){text('limitError',error.message);render();}
+  finally{limitSaving=false;renderQuota();}
+});
+function updateErrorState(){
+  const previous=Boolean(errorState?.active);errorState=D.overload(doc(),D.day());
+  document.body.classList.toggle('is-error',errorState.active);$('errorPanel').hidden=!errorState.active;
+  text('errorBalance','오늘 '+errorState.consumed+' − '+errorState.burned+' = '+errorState.net+' / '+(errorState.limit??'—')+' kcal');
+  if(previous!==errorState.active){errorClock=0;errorOffset=0;errorLastTime=performance.now();
+    hint(errorState.active?'↑ 운동 기록에서 소비 칼로리를 입력할 수 있어요.':'정상 작동으로 돌아왔어요.');
+  }
+}
+function automaticBeltOffset(){
+  const now=performance.now(),elapsed=errorLastTime?Math.min(80,now-errorLastTime):0;errorLastTime=now;
+  if(!errorState?.active||reduceMotion){errorOffset=0;return 0;}
+  if(!pointers.size&&!document.querySelector('dialog[open]')){errorClock+=elapsed;errorOffset=Math.sin(errorClock*.006)*1.2;}
+  return errorOffset;
+}
 $('helpButton').addEventListener('click',()=>{stopMotion();$('helpDialog').showModal();});
 for(const b of document.querySelectorAll('[data-close]'))b.addEventListener('click',()=>$(b.dataset.close).close());
 $('entryDialog').addEventListener('close',()=>{photoVersion++;photoController?.abort();});
@@ -154,9 +186,10 @@ function drawLegacy(){
   poly([[251,120],[369,89],[410,139],[286,174]],gradient(250,100,400,175,[[0,'#9da8b0'],[.15,'#3b454e'],[.85,'#0e151c'],[1,'#88949e']]),'#b8c8d455',1);
   poly([[264,122],[364,97],[392,135],[290,162]],'#04080c','#84939e66');
   const summary=D.summary(rows());
-  ctx.save();ctx.transform(1,-.27,.6,.87,283,130);label(D.meter(doc(),selectedDate).label,0,0,13,'#eff6fc');label('KCAL / '+selectedDate.slice(5),1,12,5.7,'#8699a9');ctx.restore();
+  ctx.save();ctx.transform(1,-.27,.6,.87,283,130);label(D.meter(doc(),selectedDate).label,0,0,13,errorState?.active?'#ff8b80':'#eff6fc');label('KCAL / '+selectedDate.slice(5),1,12,5.7,'#8699a9');ctx.restore();
   ctx.beginPath();ctx.arc(395,151,9,0,Math.PI*2);ctx.fillStyle='#202a33';ctx.fill();ctx.strokeStyle='#aabcc966';ctx.stroke();label('↑',391,155,12,'#e3edf4');hitZones.push({kind:'move',points:[[382,137],[408,137],[408,164],[382,164]]},{kind:'limit',points:[[264,122],[364,97],[392,135],[290,162]]});
-  const list=[null,...rows().slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(beltPosition),fraction=beltPosition-base;
+  const visualPosition=beltPosition+automaticBeltOffset();
+  const list=[null,...rows().slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(visualPosition),fraction=visualPosition-base;
   const phase=animationOffset;
   const moveCount=rows().filter(e=>e.type==='move').length;
   for(let i=-1;i<=8;i++){
@@ -200,7 +233,7 @@ function draw(){
   if(!chromeRenderer){drawLegacy();return;}
   if(!width)return;
   ctx.clearRect(0,0,width,height);
-  const result=chromeRenderer.render({width,height,entries:rows(),calorieMeter:D.meter(doc(),selectedDate),date:selectedDate,pending,selectedId,position:beltPosition,gesture:gestureOffset,animation:animationOffset,extractedId,extractX,flash,idle:pointers.size===0&&!document.querySelector('dialog[open]'),reduceMotion});
+  const result=chromeRenderer.render({width,height,entries:rows(),calorieMeter:D.meter(doc(),selectedDate),date:selectedDate,pending,selectedId,position:beltPosition+automaticBeltOffset(),error:Boolean(errorState?.active),gesture:gestureOffset,animation:animationOffset,extractedId,extractX,flash,idle:pointers.size===0&&!document.querySelector('dialog[open]'),reduceMotion});
   const convert=points=>points.map(([x,y])=>[(x-originX)/scale,(y-originY)/scale]);
   hitAreas=result.areas.map(a=>({...a,points:convert(a.points),frontPoints:a.frontPoints?convert(a.frontPoints):null}));hitZones=result.zones.map(a=>({...a,points:convert(a.points)}));
   if(holdPoint&&holdStart){const progress=clamp((performance.now()-holdStart)/520,0,1);ctx.beginPath();ctx.arc(holdPoint.x,holdPoint.y,19,-Math.PI/2,-Math.PI/2+Math.PI*2*progress);ctx.strokeStyle='#edf8ff';ctx.lineWidth=1.3;ctx.stroke();}
@@ -273,8 +306,8 @@ canvas.addEventListener('keydown',event=>{
 });
 new ResizeObserver(resize).observe(canvas);render();resize();
 let lastIdleFrame=0;
-function idleFrame(now){if(chromeRenderer&&!document.hidden&&now-lastIdleFrame>70&&!pointers.size&&!document.querySelector('dialog[open]')){lastIdleFrame=now;draw();}requestAnimationFrame(idleFrame);}
-if(chromeRenderer&&!reduceMotion)requestAnimationFrame(idleFrame);
+function idleFrame(now){if(pointers.size||document.querySelector('dialog[open]'))errorLastTime=now;if((chromeRenderer||errorState?.active)&&!document.hidden&&now-lastIdleFrame>50&&!pointers.size&&!document.querySelector('dialog[open]')){lastIdleFrame=now;draw();}requestAnimationFrame(idleFrame);}
+if(!reduceMotion)requestAnimationFrame(idleFrame);
 let lastCalendarDay=D.day();
 function refreshCalendarDay(){const current=D.day();if(current===lastCalendarDay)return;if(selectedDate===lastCalendarDay){selectedDate=current;beltPosition=0;selectedId=null;peekVisible=false;}lastCalendarDay=current;render();}
 setInterval(refreshCalendarDay,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshCalendarDay();});

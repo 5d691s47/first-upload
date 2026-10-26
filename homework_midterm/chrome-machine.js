@@ -36,6 +36,7 @@ class ChromeMachine {
   panel(2.6,9,[-5,4,1],4.5);panel(1.3,9,[5,4,-.5],7);panel(8,3,[0,8,-1],3.5);panel(2,7,[-1,3,-6],5);panel(3,.7,[1,3,6],2.5);panel(.5,6,[3,2,-4],4);panel(5,3,[-3,6,-8],3);
   const pmrem=new T.PMREMGenerator(this.renderer);this.environmentTarget=pmrem.fromScene(room,.018,.1,40);this.scene.environment=this.environmentTarget.texture;pmrem.dispose();room.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});
   const rim=new T.DirectionalLight(0xeaf3ff,.8);rim.position.set(-3,7,3);this.scene.add(rim);const edge=new T.DirectionalLight(0xffffff,1.1);edge.position.set(4,4,-4);this.scene.add(edge);
+  this.errorLight=new T.PointLight(0xff3025,0,10);this.errorLight.position.set(-1,3,3);this.scene.add(this.errorLight);
   const glowCanvas=document.createElement('canvas');glowCanvas.width=glowCanvas.height=128;const c=glowCanvas.getContext('2d'),g=c.createRadialGradient(64,64,0,64,64,64);g.addColorStop(0,'rgba(205,220,230,.11)');g.addColorStop(.45,'rgba(125,145,160,.03)');g.addColorStop(1,'rgba(0,0,0,0)');c.fillStyle=g;c.fillRect(0,0,128,128);
   const floor=new T.Mesh(new T.PlaneGeometry(7,6),new T.MeshBasicMaterial({map:new T.CanvasTexture(glowCanvas),transparent:true,depthWrite:false,opacity:.7}));floor.rotation.x=-Math.PI/2;floor.position.set(0,.03,-.2);this.scene.add(floor);
  }
@@ -98,15 +99,15 @@ class ChromeMachine {
  }
  project(point,group=this.machine){const v=new T.Vector3(...point);group.localToWorld(v);v.project(this.camera);return [(v.x+1)*this.width/2,(1-v.y)*this.height/2];}
  render(state){
-  if(this.lost)return {areas:[],zones:[]};this.resize(state.width,state.height);
+  if(this.lost)return {areas:[],zones:[]};this.resize(state.width,state.height);this.errorLight.intensity=state.error?18:0;
   const now=performance.now();if(state.idle&&!state.reduceMotion)this.pose=Math.sin(now*.00016)*.027;this.machine.rotation.y=this.pose;
   const entries=state.entries,list=[null,...entries.slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(state.position),fraction=state.position-base;const areas=[];
-  const meter=state.calorieMeter||{consumed:0,limit:null,label:'0 / —'},consoleKey=meter.label+'/'+state.date;
+  const meter=state.calorieMeter||{consumed:0,limit:null,label:'0 / —'},consoleKey=meter.label+'/'+state.date+'/'+Boolean(state.error);
   if(this.consoleKey!==consoleKey){
-   this.consoleKey=consoleKey;const c=this.consoleCanvas.getContext('2d');c.clearRect(0,0,512,192);c.fillStyle='#e5f0f8';c.textAlign='center';
+   this.consoleKey=consoleKey;const c=this.consoleCanvas.getContext('2d');c.clearRect(0,0,512,192);c.fillStyle=state.error?'#ff8e82':'#e5f0f8';c.textAlign='center';
    let size=52;c.font=size+'px monospace';while(c.measureText(meter.label).width>460&&size>25){size--;c.font=size+'px monospace';}c.fillText(meter.label,256,99);
-   c.fillStyle='#91a6b7';c.font='15px monospace';c.fillText('KCAL  /  '+(state.date||'').slice(5).replace('-','.')+(meter.limit==null?'  ·  SET LIMIT':''),256,143);
-   c.fillStyle='#26323c';c.fillRect(55,166,402,2);if(meter.limit!=null){c.fillStyle='#cadce9';c.fillRect(55,166,402*Math.min(1,meter.consumed/meter.limit),2);}this.consoleTexture.needsUpdate=true;
+   c.fillStyle='#91a6b7';c.font='15px monospace';c.fillText(state.error?'ERROR / NET KCAL':'NET KCAL / '+(state.date||'').slice(5).replace('-','.')+(meter.limit==null?' · SET LIMIT':''),256,143);
+   c.fillStyle='#26323c';c.fillRect(55,166,402,2);if(meter.limit!=null){c.fillStyle=state.error?'#ff8275':'#cadce9';c.fillRect(55,166,402*Math.min(1,(meter.net??meter.consumed)/meter.limit),2);}this.consoleTexture.needsUpdate=true;
   }
   for(let k=0;k<this.steps.length;k++){
    const slot=this.steps[k],i=k-1,z=i-fraction+state.animation/43,recordIndex=(((base+i)%cycleLength)+cycleLength)%cycleLength,item=list[recordIndex];slot.group.visible=z>-.65&&z<7.65;if(!slot.group.visible)continue;
