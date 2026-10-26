@@ -1,140 +1,105 @@
-/* BITE / STRIDE — pointer-driven stair diary. No external UI dependencies. */
+/* BITE / STRIDE — a tactile, monochrome stair diary. */
 (() => {
 'use strict';
-const D = globalThis.Diary, $ = id => document.getElementById(id);
-let storage;
-try { storage = window.localStorage; } catch { storage = {getItem(){throw Error('브라우저 저장 공간에 접근할 수 없어요.');},setItem(){throw Error('브라우저 저장 공간에 접근할 수 없어요.');}}; }
-const loaded = D.load(storage);
-let personal = loaded.doc, sample = D.demo(), demoMode = false, pending = null, editing = null, draftId = null;
-let selectedDate = D.day(), selectedId = null, mode = 'meal', icon = '🍚', expanded = false, sound = false;
-let storageBlocked = Boolean(loaded.error), toastTimer, audioContext, photoData = null, photoVersion = 0, analyzing = false, photoController;
-const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const icons = {meal:['🍚','🥗','🍞','🥑','🍎','🍜','🍣','🍗','🍰','☕','🥛','🍽️'],move:['🚶','🏃','🚴','🏊','🧘','🏋️','🥾','💃']};
-const doc = () => demoMode ? sample : personal;
-const rows = () => D.forDay(doc().entries,selectedDate);
-const unit = entry => entry.type==='meal' ? 'kcal' : '분';
-const format = number => new Intl.NumberFormat('ko-KR').format(number);
-const text = (id,value) => { $(id).textContent = value; };
-function notify(message){text('toast',message);$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4200);}
-function persist(){
-  if(demoMode) return true;
-  if(storageBlocked){notify('브라우저 저장을 사용할 수 없어요. 기록 내보내기로 보관해 주세요.');return false;}
-  try{storage.setItem(D.KEY,JSON.stringify(personal));text('storageStatus','이 브라우저에 자동 저장했어요.');return true;}
-  catch{storageBlocked=true;text('storageStatus','자동 저장 불가 · 기록을 내보내 보관해 주세요.');notify('저장 공간을 사용할 수 없어요. 기록 내보내기로 보관해 주세요.');return false;}
+const D=globalThis.Diary,$=id=>document.getElementById(id),text=(id,value)=>{$(id).textContent=value;};
+let storage;try{storage=window.localStorage;}catch{storage={getItem(){throw Error('저장 공간을 사용할 수 없어요.');},setItem(){throw Error('저장 공간을 사용할 수 없어요.');}};}
+const loaded=D.load(storage);
+let personal=loaded.doc,sample=D.demo(),demoMode=false,storageBlocked=Boolean(loaded.error);
+let selectedDate=D.day(),selectedId=null,pending=null,editing=null,draftId=null,mode='meal',icon='🍚',peekVisible=false;
+let sound=false,audioContext,toastTimer,hintTimer,undoAction=null;
+let photoData=null,photoVersion=0,analyzing=false,photoController;
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const doc=()=>demoMode?sample:personal,rows=()=>D.forDay(doc().entries,selectedDate),unit=e=>e.type==='meal'?'kcal':'분';
+const format=value=>new Intl.NumberFormat('ko-KR').format(value);
+const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
+const el=(tag,cls,value)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(value!=null)n.textContent=value;return n;};
+function hint(value,quietAfter=6500){text('gestureStatus',value);$('gestureStatus').classList.remove('quiet');clearTimeout(hintTimer);if(quietAfter)hintTimer=setTimeout(()=>$('gestureStatus').classList.add('quiet'),quietAfter);}
+function notify(message,undo=null){const active=document.activeElement?.closest('dialog[open]')||Array.from(document.querySelectorAll('dialog[open]')).at(-1);(active||document.body).append(document.getElementById("toast"));clearTimeout(toastTimer);undoAction=undo;text('toastText',message);$('undoButton').hidden=!undo;$('toast').hidden=false;toastTimer=setTimeout(()=>{$('toast').hidden=true;undoAction=null;},undo?8500:3800);}
+$('undoButton').addEventListener('click',()=>{const action=undoAction;undoAction=null;$('toast').hidden=true;clearTimeout(toastTimer);action?.();});
+function persist(target=doc()){
+  if(target!==personal)return true;
+  if(storageBlocked){text('storageStatus','저장 불가 · 내보내기로 보관해 주세요.');notify('자동 저장을 사용할 수 없어요. 기록을 내보내 주세요.');return false;}
+  try{storage.setItem(D.KEY,JSON.stringify(personal));text('storageStatus','이 브라우저에 보관돼요.');return true;}
+  catch{storageBlocked=true;text('storageStatus','저장 불가 · 내보내기로 보관해 주세요.');notify('자동 저장을 사용할 수 없어요. 기록을 내보내 주세요.');return false;}
 }
-if(loaded.migrated) persist();
-if(loaded.error){text('storageStatus','이전 저장 데이터를 읽지 못했어요. 원본은 유지되어 있어요.');setTimeout(()=>notify('저장 데이터를 읽지 못해 원본을 보존했어요. 백업 파일을 불러올 수 있어요.'),300);}
-function el(tag,className,value){const n=document.createElement(tag);if(className)n.className=className;if(value!=null)n.textContent=value;return n;}
 function render(){
-  const todaySummary=D.summary(D.forDay(doc().entries,D.day()));
-  text('mealCount',String(todaySummary.meals).padStart(2,'0'));text('moveMinutes',String(todaySummary.minutes).padStart(2,'0'));
-  text('foodEnergy',format(todaySummary.kcal));text('exerciseCount',todaySummary.moves);
-  text('machineDate',D.day().replaceAll('-','.'));$('archiveDate').value=selectedDate;
-  $('demoBanner').hidden=!demoMode;$('demoButton').setAttribute('aria-pressed',String(demoMode));text('demoButton',demoMode?'내 기록 보기':'예시 체험');
-  if(demoMode)text('storageStatus','예시 공간 · 수정한 예시는 내 기록에 저장되지 않아요.');
-  else if(!storageBlocked)text('storageStatus','이 브라우저에 기록을 보관해요.');
-  const entries=rows();text('archiveCount',`${entries.length}개의 순간`);
-  $('recordList').replaceChildren();
-  if(!entries.length){const n=el('div','empty-state');n.append(el('b','', '아직 새겨지지 않은 하루.'),el('p','', '한 끼와 한 번의 움직임으로 첫 궤적을 만들어 보세요.'));$('recordList').append(n);}
-  for(const e of entries){
-    const b=el('button',`record-card ${e.type==='move'?'move':''}${selectedId===e.id?' selected':''}`);b.type='button';b.dataset.id=e.id;
-    b.setAttribute('aria-label',`${e.at.slice(11)} ${e.name}, ${e.amount}${unit(e)}, 자세히 보기 및 수정`);
-    const info=el('span','record-info'),time=el('time','',e.at.slice(11));time.dateTime=e.at;
-    info.append(time,el('b','record-name',e.name),el('span','record-meta',`${format(e.amount)} ${unit(e)}${e.note?' · 메모 있음':''}`));
-    b.append(el('span','record-emoji',e.icon),info,el('span','record-arrow',e.type==='meal'?'↓':'↑'));
-    b.addEventListener('click',()=>openEditor(e.type,e));$('recordList').append(b);
-  }
-  renderTimeline();renderPending();renderLegacy();draw();
+  const s=D.summary(rows());text('mealCount',String(s.meals).padStart(2,'0'));text('moveMinutes',String(s.minutes).padStart(2,'0'));text('foodEnergy',format(s.kcal));text('exerciseCount',s.moves);text('machineDate',selectedDate);
+  $('archiveDate').value=selectedDate;$('demoBanner').hidden=!demoMode;$('demoButton').setAttribute('aria-pressed',String(demoMode));text('demoButton',demoMode?'내 기록':'예시');
+  text('storageStatus',demoMode?'예시 공간 · 내 기록과 분리돼요.':storageBlocked?'저장 불가 · 내보내기로 보관해 주세요.':'이 브라우저에 보관돼요.');
+  renderPending();renderPeek();renderArchive();draw();
 }
-function renderTimeline(){
-  $('timeline').hidden=!expanded;$('unfoldButton').setAttribute('aria-expanded',String(expanded));$('unfoldButton').querySelector('span').textContent=expanded?'접기':'펼치기';
-  if(!expanded)return;
-  const inner=el('div','timeline-inner');
-  for(let h=0;h<=24;h+=3){const n=el('span','time-tick',String(h).padStart(2,'0')+':00');n.style.left=`${h/24*100}%`;inner.append(n);}
-  for(const e of rows()){
-    const minutes=Number(e.at.slice(11,13))*60+Number(e.at.slice(14,16));
-    const n=el('button',`time-event ${e.type==='move'?'move':''}`);n.style.left=`${minutes/1440*100}%`;n.title=`${e.at.slice(11)} ${e.name}`;
-    n.append(el('span','',e.icon),el('b','',e.name),el('small','',e.at.slice(11)));n.addEventListener('click',()=>openEditor(e.type,e));inner.append(n);
-  }
-  $('timeline').replaceChildren(inner);
-}
-function setExpanded(value,scroll=false){expanded=value;renderTimeline();if(scroll&&value)$('archive').scrollIntoView({behavior:reduceMotion?'instant':'smooth',block:'start'});}
 function renderPending(){
   $('pendingCard').hidden=!pending;
-  if(!pending){text('gestureHint','식사나 운동을 준비한 뒤 계단을 밀어 주세요.');$('gestureHint').append(el('small','','빈손으로 밀면 기록을 되감아 볼 수 있어요.'));return;}
-  const move=pending.type==='move';$('pendingCard').classList.toggle('move',move);
-  text('pendingIcon',pending.icon);text('pendingName',pending.name);text('pendingDescription',`${pending.at.slice(11)} · ${format(pending.amount)} ${unit(pending)} · ${move?'계단을 위로 밀어 주세요 ↑':'계단을 아래로 밀어 주세요 ↓'}`);
-  text('stampButton',move?'한 칸 올려 움직임 새기기 ↑':'한 칸 내려 한 끼 새기기 ↓');
-  text('gestureHint',move?'운동한 순간을 위로 밀어 새겨 주세요.':'먹은 순간을 아래로 밀어 새겨 주세요.');$('gestureHint').append(el('small','','끝까지 밀고 손을 떼면 저장돼요. 버튼으로도 가능해요.'));
+  if(pending){text('pendingName',pending.name);text('stampButton',pending.type==='meal'?'↓':'↑');$('stampButton').setAttribute('aria-label',pending.type==='meal'?'한 끼 기록 확정':'운동 기록 확정');}
 }
-function renderLegacy(){
-  let button=$('legacyDraftButton');
-  if(!button){button=el('button','text-button');button.id='legacyDraftButton';$('addMeal').insertAdjacentElement('afterend',button);button.addEventListener('click',()=>{const first=doc().drafts[0];if(first){openEditor('meal',null,first);}});}
-  button.hidden=!doc().drafts.length;text('legacyDraftButton',`이전 식탁 메모 불러오기 (${doc().drafts.length})`);
+function renderPeek(){
+  const e=doc().entries.find(x=>x.id===selectedId);$('recordPeek').hidden=!peekVisible||!e||Boolean(pending);
+  if(e){text('peekTime',e.at.slice(11));text('peekName',e.name);text('peekAmount',`${format(e.amount)} ${unit(e)}`);}
 }
-function renderIcons(){
-  $('iconChoices').replaceChildren();const list=[...new Set([icon,...icons[mode]])];
-  for(const value of list){const b=el('button','icon-choice',value);b.type='button';b.setAttribute('aria-label',`${value} 아이콘`);b.setAttribute('aria-pressed',String(icon===value));b.addEventListener('click',()=>{icon=value;renderIcons();});$('iconChoices').append(b);}
+function renderArchive(){
+  const entries=rows();text('archiveCount',`${entries.length} TRACES`);$('recordList').replaceChildren();
+  if(!entries.length)$('recordList').append(el('div','empty-state','아직 새겨지지 않은 하루.'));
+  for(const e of entries){
+    const b=el('button',`record-card ${e.type}${selectedId===e.id?' selected':''}`);b.type='button';b.dataset.id=e.id;b.setAttribute('aria-label',`${e.at.slice(11)} ${e.name}, ${e.amount}${unit(e)}, 수정`);
+    const info=el('span','record-info'),time=el('time','',e.at.slice(11));time.dateTime=e.at;
+    info.append(time,el('b','record-name',e.name));if(e.note)info.append(el('span','record-note-dot'));
+    b.append(el('span','record-arrow',e.type==='meal'?'↓':'↑'),info,el('span','record-meta',`${format(e.amount)} ${unit(e)}`));
+    b.addEventListener('click',()=>openEditor(e.type,e));$('recordList').append(b);
+  }
+  const inner=el('div','timeline-inner');
+  for(let h=0;h<=24;h+=3){const tick=el('span','time-tick',String(h).padStart(2,'0'));tick.style.left=`${h/24*100}%`;inner.append(tick);}
+  for(const e of entries){const minutes=Number(e.at.slice(11,13))*60+Number(e.at.slice(14,16));const n=el('button',`time-event ${e.type}`);n.style.left=`${minutes/1440*100}%`;n.title=`${e.at.slice(11)} ${e.name}`;n.append(el('span','',e.type==='meal'?'↓':'↑'),el('b','',e.name),el('small','',e.at.slice(11)));n.addEventListener('click',()=>openEditor(e.type,e));inner.append(n);}
+  $('timeline').replaceChildren(inner);$('legacyDraftButton').hidden=!doc().drafts.length;text('legacyDraftButton',`이전 식탁 메모 (${doc().drafts.length})`);
 }
+function openArchive(){stopMotion();resetPointers();renderArchive();if(!$('archiveDialog').open)$('archiveDialog').showModal();$('unfoldButton').setAttribute('aria-expanded','true');}
+$('archiveDialog').addEventListener('close',()=>{$('unfoldButton').setAttribute('aria-expanded','false');canvas.focus({preventScroll:true});});
 function openEditor(type,entry=null,draft=null){
-  mode=type;editing=entry?.id||null;draftId=draft?.id||null;const value=entry||draft;icon=value?.icon||icons[type][0];
-  const move=type==='move';$('entryForm').reset();text('formError','');
-  text('entryEyebrow',move?'STRIDE / RECORD':'BITE / RECORD');text('entryTitle',entry?'남겨 둔 순간, 다시 보기':move?'어떻게 움직였나요?':'어떤 한 끼였나요?');
-  text('entryCopy',entry?'식사와 운동의 흔적은 각각 보관돼요. 내용을 확인하고 수정할 수 있어요.':move?'운동 시간을 입력한 뒤, 계단을 위로 밀어 새겨 주세요.':'입력한 뒤, 계단을 아래로 밀어 새겨 주세요.');
-  text('nameLabel',move?'운동 종류':'음식 이름');text('amountLabel',move?'운동 시간 · 분':'칼로리 · kcal');
-  $('entryName').placeholder=move?'예: 저녁 산책':'예: 따뜻한 비빔밥';$('entryName').value=value?.name||'';
-  $('entryAmount').min=move?'1':'0';$('entryAmount').max=move?'1440':'10000';$('entryAmount').value=value?.amount??'';
-  $('entryTime').value=value?.at||D.localTime();$('entryNote').value=value?.note||'';
-  text('submitEntry',entry?'수정 내용 저장':move?'역방향 기록 준비 ↑':'계단에 올려두기 ↓');$('deleteEntry').hidden=!entry;
-  $('photoSection').hidden=move;$('photoSection').open=false;resetPhoto();renderIcons();$('entryDialog').showModal();
+  stopMotion();resetPointers();mode=type;editing=entry?.id||null;draftId=draft?.id||null;const value=entry||draft;icon=value?.icon||(type==='meal'?'🍚':'🚶');const move=type==='move';
+  $('entryForm').reset();text('formError','');text('entryEyebrow',move?'STRIDE / REVERSE':'BITE / FORWARD');text('entryTitle',entry?'새겨 둔 순간.':move?'움직임을 새기기.':'한 끼를 새기기.');
+  text('entryCopy',entry?'확인하고, 필요한 것만 고쳐 주세요.':move?'준비한 뒤 계단을 위로 밀어요.':'준비한 뒤 계단을 아래로 밀어요.');text('nameLabel',move?'운동':'음식');text('amountLabel',move?'시간 · 분':'kcal');
+  $('entryName').placeholder=move?'어떻게 움직였나요?':'무엇을 먹었나요?';$('entryName').value=value?.name||'';$('entryAmount').min=move?'1':'0';$('entryAmount').max=move?'1440':'10000';$('entryAmount').value=value?.amount??'';$('entryTime').value=value?.at||D.localTime();$('entryNote').value=value?.note||'';
+  text('submitEntry',entry?'수정하기':move?'준비하기 ↑':'준비하기 ↓');$('deleteEntry').hidden=!entry;$('photoSection').hidden=move;$('photoSection').open=false;resetPhoto();
+  if(!$('entryDialog').open)$('entryDialog').showModal();
 }
 $('entryForm').addEventListener('submit',event=>{
-  event.preventDefault();
-  try{
+  event.preventDefault();try{
     const e=D.record({id:editing||D.uid(),type:mode,name:$('entryName').value,amount:Number($('entryAmount').value),at:$('entryTime').value,note:$('entryNote').value,icon});
-    if(editing){const index=doc().entries.findIndex(x=>x.id===editing);if(index<0)throw Error('기록이 변경되었어요. 다시 열어 주세요.');doc().entries[index]=e;selectedDate=e.at.slice(0,10);persist();notify('기록을 수정했어요.');}
-    else{pending=e;pending.draftId=draftId;gestureOffset=0;text('gestureStatus',e.type==='move'?'위로 밀어서 움직임을 새겨 주세요 ↑':'아래로 밀어서 한 끼를 새겨 주세요 ↓');}
-    $('entryDialog').close();render();if(!editing)$('machine').focus({preventScroll:true});
+    if(editing){const index=doc().entries.findIndex(x=>x.id===editing);if(index<0)throw Error('기록을 다시 열어 주세요.');doc().entries[index]=e;selectedDate=e.at.slice(0,10);persist();hint('수정한 순간을 보관했어요.');}
+    else{pending={...e,draftId};gestureOffset=0;peekVisible=false;hint(e.type==='meal'?'아래로 밀고 손을 떼면 새겨져요. ↓':'위로 밀고 손을 떼면 새겨져요. ↑',0);}
+    $('entryDialog').close();render();if(!editing)canvas.focus({preventScroll:true});
   }catch(error){text('formError',error.message);}
 });
 function stamp(){
-  if(!pending)return;
-  const value=D.record(pending),move=value.type==='move';
-  if(!doc().entries.some(x=>x.id===value.id))doc().entries.push(value);
-  if(pending.draftId)doc().drafts=doc().drafts.filter(x=>x.id!==pending.draftId);
-  selectedDate=value.at.slice(0,10);selectedId=value.id;pending=null;gestureOffset=0;historyOffset=0;
-  const saved=persist();animateStamp(move?-1:1);clickSound(move);render();
-  text('gestureStatus',move?'움직임의 선을 더했어요. 식사 기록도 그대로 남아요.':'한 끼의 자국이 계단에 남았어요.');
-  if(saved)notify(demoMode?'예시 계단에 새겼어요. 내 기록에는 영향을 주지 않아요.':move?'운동을 새겼어요. 식사 기록은 그대로예요.':'한 끼를 새기고 저장했어요.');
+  if(!pending)return;stopMotion();const e=D.record(pending),move=e.type==='move';
+  if(!doc().entries.some(x=>x.id===e.id))doc().entries.push(e);if(pending.draftId)doc().drafts=doc().drafts.filter(x=>x.id!==pending.draftId);
+  pending=null;selectedDate=e.at.slice(0,10);selectedId=e.id;peekVisible=false;beltPosition=0;gestureOffset=0;extractX=0;
+  const saved=persist();render();animateStamp(move?-1:1);clickSound(move);$('gestureProgress').style.width='0%';
+  if(saved)hint(move?'움직임을 새겼어요. 식사 기록도 남아 있어요.':'한 끼가 새겨졌어요.');
 }
-$('stampButton').addEventListener('click',stamp);
-$('cancelPending').addEventListener('click',()=>{pending=null;gestureOffset=0;render();text('gestureStatus','준비를 취소했어요. 저장된 기록은 그대로예요.');});
-$('addMeal').addEventListener('click',()=>openEditor('meal'));$('addMove').addEventListener('click',()=>openEditor('move'));
-$('deleteEntry').addEventListener('click',()=>$('confirmDialog').showModal());
-$('confirmDelete').addEventListener('click',()=>{doc().entries=doc().entries.filter(x=>x.id!==editing);persist();$('confirmDialog').close();$('entryDialog').close();render();notify('선택한 기록을 삭제했어요.');});
-$('helpButton').addEventListener('click',()=>$('helpDialog').showModal());
+function removeRecord(id){
+  const target=doc(),index=target.entries.findIndex(e=>e.id===id);if(index<0)return;
+  const [entry]=target.entries.splice(index,1);persist(target);selectedId=null;peekVisible=false;extractX=0;beltPosition=clamp(beltPosition,0,Math.max(0,target.entries.length));render();clickSound(true);
+  notify('기록을 분리했어요.',()=>{if(!target.entries.some(e=>e.id===entry.id))target.entries.splice(Math.min(index,target.entries.length),0,entry);persist(target);render();hint('기록을 되돌렸어요.');});
+}
+$('stampButton').addEventListener('click',stamp);$('cancelPending').addEventListener('click',()=>{pending=null;gestureOffset=0;render();hint('아직 새기지 않은 기록을 내려놓았어요.');});
+$('addMeal').addEventListener('click',()=>openEditor('meal'));$('addMove').addEventListener('click',()=>openEditor('move'));$('unfoldButton').addEventListener('click',openArchive);
+$('editPeek').addEventListener('click',()=>{const e=doc().entries.find(x=>x.id===selectedId);if(e)openEditor(e.type,e);});$('closePeek').addEventListener('click',()=>{peekVisible=false;renderPeek();});
+$('legacyDraftButton').addEventListener('click',()=>{const e=doc().drafts[0];if(e)openEditor('meal',null,e);});
+$('deleteEntry').addEventListener('click',()=>$('confirmDialog').showModal());$('confirmDelete').addEventListener('click',()=>{const id=editing;$('confirmDialog').close();$('entryDialog').close();removeRecord(id);});
+$('helpButton').addEventListener('click',()=>{stopMotion();$('helpDialog').showModal();});
 for(const b of document.querySelectorAll('[data-close]'))b.addEventListener('click',()=>$(b.dataset.close).close());
 $('entryDialog').addEventListener('close',()=>{photoVersion++;photoController?.abort();});
-function switchDemo(){demoMode=!demoMode;pending=null;selectedId=null;selectedDate=D.day();historyOffset=0;gestureOffset=0;render();text('gestureStatus',demoMode?'예시 기록을 돌려 보세요. 새 기록도 연습할 수 있어요.':'손끝으로 돌리는, 나의 하루');}
+function switchDemo(){stopMotion();clearHold();demoMode=!demoMode;pending=null;selectedId=null;peekVisible=false;selectedDate=D.day();beltPosition=0;gestureOffset=0;undoAction=null;$('toast').hidden=true;render();hint(demoMode?'밀어 보고, 붙잡아 보세요. 예시는 내 기록과 분리돼요.':'빈 계단을 길게 눌러 시작하세요.');}
 $('demoButton').addEventListener('click',switchDemo);$('exitDemo').addEventListener('click',switchDemo);
-$('unfoldButton').addEventListener('click',()=>setExpanded(!expanded,true));
-$('archiveDate').addEventListener('change',()=>{if(!/^\d{4}-\d\d-\d\d$/.test($('archiveDate').value))return;selectedDate=$('archiveDate').value;historyOffset=0;selectedId=null;render();});
-function shiftDay(delta){const d=new Date(`${selectedDate}T12:00`);d.setDate(d.getDate()+delta);selectedDate=D.day(d);selectedId=null;historyOffset=0;render();}
-$('previousDay').addEventListener('click',()=>shiftDay(-1));$('nextDay').addEventListener('click',()=>shiftDay(1));$('todayButton').addEventListener('click',()=>{selectedDate=D.day();historyOffset=0;render();});
-$('exportButton').addEventListener('click',()=>{
-  const blob=new Blob([JSON.stringify(doc(),null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=`bite-stride-${demoMode?'example-':''}${D.day()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('기록 파일을 내보냈어요. 다른 기기에서 불러올 수 있어요.');
-});
-$('importFile').addEventListener('change',async event=>{
-  const file=event.target.files[0];if(!file)return;
-  try{if(file.size>8*1024*1024)throw Error('8MB 이하의 기록 파일을 선택해 주세요.');const incoming=D.parse(await file.text());
-    const result=D.merge(doc(),incoming);if(demoMode)sample=result;else{personal=result;if(storageBlocked){try{storage.setItem(D.KEY,JSON.stringify(personal));storageBlocked=false;}catch{}}}
-    const saved=persist();selectedDate=incoming.entries.at(-1)?.at.slice(0,10)||D.day();render();if(saved)notify('기존 기록을 유지하며 불러왔어요. 중복 기록은 건너뛰었어요.');
-  }catch(error){notify(error.message||'기록 파일을 읽지 못했어요.');}finally{event.target.value='';}
-});
-window.addEventListener('storage',event=>{if(event.key===D.KEY&&!demoMode){try{personal=event.newValue?D.parse(event.newValue):D.empty();pending=null;render();notify('다른 탭에서 바꾼 기록을 반영했어요.');}catch{notify('다른 탭의 기록을 읽지 못했어요. 현재 기록은 유지해요.');}}});
-$('soundButton').addEventListener('click',()=>{sound=!sound;text('soundButton',sound?'소리 켜짐':'소리 꺼짐');$('soundButton').setAttribute('aria-pressed',String(sound));if(sound)clickSound(false);});
-function clickSound(move){if(!sound)return;try{audioContext ||= new (window.AudioContext||window.webkitAudioContext)();audioContext.resume();const osc=audioContext.createOscillator(),gain=audioContext.createGain();osc.type='triangle';osc.frequency.setValueAtTime(move?430:650,audioContext.currentTime);osc.frequency.exponentialRampToValueAtTime(90,audioContext.currentTime+.09);gain.gain.setValueAtTime(.065,audioContext.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audioContext.currentTime+.12);osc.connect(gain);gain.connect(audioContext.destination);osc.start();osc.stop(audioContext.currentTime+.13);}catch{}}
-// Camera analysis stays optional. Credentials remain on the local Node server.
+$('archiveDate').addEventListener('change',()=>{if(!/^\d{4}-\d\d-\d\d$/.test($('archiveDate').value))return;stopMotion();selectedDate=$('archiveDate').value;beltPosition=0;selectedId=null;peekVisible=false;render();});
+function shiftDay(delta){stopMotion();const date=new Date(`${selectedDate}T12:00`);date.setDate(date.getDate()+delta);selectedDate=D.day(date);beltPosition=0;selectedId=null;peekVisible=false;render();}
+$('previousDay').addEventListener('click',()=>shiftDay(-1));$('nextDay').addEventListener('click',()=>shiftDay(1));$('todayButton').addEventListener('click',()=>{selectedDate=D.day();beltPosition=0;selectedId=null;peekVisible=false;render();});
+$('exportButton').addEventListener('click',()=>{const blob=new Blob([JSON.stringify(doc(),null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download=`bite-stride-${demoMode?'example-':''}${D.day()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('기록을 파일로 내보냈어요.');});
+$('importFile').addEventListener('change',async event=>{const file=event.target.files[0];if(!file)return;try{if(file.size>8*1024*1024)throw Error('8MB 이하 파일을 선택해 주세요.');const incoming=D.parse(await file.text()),merged=D.merge(doc(),incoming);if(demoMode)sample=merged;else{personal=merged;if(storageBlocked){try{storage.setItem(D.KEY,JSON.stringify(personal));storageBlocked=false;}catch{}}}const saved=persist();selectedDate=incoming.entries.at(-1)?.at.slice(0,10)||D.day();beltPosition=0;render();if(saved)notify('기존 기록에 합쳤어요. 중복은 건너뛰었어요.');}catch(error){notify(error.message||'파일을 읽지 못했어요.');}finally{event.target.value='';}});
+window.addEventListener('storage',event=>{if(event.key===D.KEY&&!demoMode){try{personal=event.newValue?D.parse(event.newValue):D.empty();pending=null;beltPosition=0;stopMotion();render();hint('다른 탭에서 바꾼 기록을 반영했어요.');}catch{notify('기록을 읽지 못해 현재 상태를 유지해요.');}}});
+$('soundButton').addEventListener('click',()=>{sound=!sound;$('soundButton').setAttribute('aria-pressed',String(sound));$('soundButton').setAttribute('aria-label',sound?'소리 끄기':'소리 켜기');$('soundButton').title=sound?'소리 끄기':'소리 켜기';$('soundButton').style.color=sound?'#f0f5fa':'';if(sound)clickSound(false);});
+function clickSound(move){if(!sound)return;try{audioContext ||= new (window.AudioContext||window.webkitAudioContext)();audioContext.resume();const osc=audioContext.createOscillator(),gain=audioContext.createGain();osc.type='triangle';osc.frequency.setValueAtTime(move?420:660,audioContext.currentTime);osc.frequency.exponentialRampToValueAtTime(85,audioContext.currentTime+.1);gain.gain.setValueAtTime(.06,audioContext.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audioContext.currentTime+.13);osc.connect(gain);gain.connect(audioContext.destination);osc.start();osc.stop(audioContext.currentTime+.14);}catch{}}
+function renderIcons(){} // Legacy icon metadata is retained; the machine uses only monochrome etchings.
 function resetPhoto(){photoVersion++;photoController?.abort();photoData=null;analyzing=false;$('photoFile').value='';$('photoPreview').hidden=true;$('photoPreview').removeAttribute('src');$('photoConsent').checked=false;$('analyzeButton').disabled=true;text('photoStatus','사진은 기록에 저장되지 않아요. 분석값을 확인·수정해 주세요.');}
 $('photoConsent').addEventListener('change',()=>{$('analyzeButton').disabled=!photoData||!$('photoConsent').checked||analyzing;});
 $('photoFile').addEventListener('change',async event=>{
@@ -154,113 +119,139 @@ $('analyzeButton').addEventListener('click',async()=>{
   catch(error){if(version===photoVersion)text('photoStatus',error.name==='AbortError'?'분석이 중단됐어요. 다시 시도하거나 직접 입력해 주세요.':error.message);}
   finally{clearTimeout(timer);if(version===photoVersion){analyzing=false;$('analyzeButton').disabled=!photoData||!$('photoConsent').checked;}}
 });
-// The stair machine is drawn locally so dragging has immediate tactile feedback.
-const canvas=$('machine'),ctx=canvas.getContext('2d');let width=0,height=0,scale=1,originX=0,originY=0;
-let gestureOffset=0,historyOffset=0,animationOffset=0,flash=0,animationFrame=0,hitAreas=[];
-function resize(){const r=canvas.getBoundingClientRect();width=r.width;height=r.height;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);scale=Math.min(width/640,height/530);originX=(width-640*scale)/2;originY=(height-530*scale)/2;draw();}
-function polygon(points,fill,stroke='#414a43',line=1){ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=line;ctx.stroke();}}
-function line(points,color,lineWidth=2){ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.strokeStyle=color;ctx.lineWidth=lineWidth;ctx.lineCap='round';ctx.lineJoin='round';ctx.stroke();}
-function rail(points){line(points,'#2b3832',11);line(points.map(([x,y])=>[x-1.5,y-2]),'#829185',3);}
-function label(value,x,y,size=10,color='#c5cbbb',font='monospace'){ctx.fillStyle=color;ctx.font=`${size}px ${font}`;ctx.fillText(value,x,y);}
+
+// Locally drawn metal: gradients, bevels, brushed ribs, and specular handrails.
+const canvas=$('machine'),ctx=canvas.getContext('2d');
+let width=0,height=0,scale=1,originX=0,originY=0,beltPosition=0,gestureOffset=0,extractX=0,extractedId=null;
+let animationOffset=0,flash=0,stampFrame=0,motionFrame=0,holdFrame=0,holdTimer=0,holdStart=0,holdPoint=null,hitAreas=[],hitZones=[];
+function resize(){const r=canvas.getBoundingClientRect();width=r.width;height=r.height;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);scale=Math.min((width-25)/540,(height-190)/620,1.35);scale=Math.max(.32,scale);originX=width/2-390*scale;originY=height/2-345*scale-6;draw();}
+function poly(points,fill,stroke='#ffffff20',thickness=1){ctx.beginPath();for(let i=0;i<points.length;i++)i?ctx.lineTo(...points[i]):ctx.moveTo(...points[i]);ctx.closePath();ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=thickness;ctx.stroke();}}
+function line(points,color,thickness=1){ctx.beginPath();for(let i=0;i<points.length;i++)i?ctx.lineTo(...points[i]):ctx.moveTo(...points[i]);ctx.strokeStyle=color;ctx.lineWidth=thickness;ctx.lineJoin='round';ctx.lineCap='round';ctx.stroke();}
+function gradient(x1,y1,x2,y2,stops){const g=ctx.createLinearGradient(x1,y1,x2,y2);for(const [offset,color]of stops)g.addColorStop(offset,color);return g;}
+function label(value,x,y,size=10,color='#d3dbe0',font='monospace'){ctx.font=`${size}px ${font}`;ctx.fillStyle=color;ctx.fillText(value,x,y);}
+function rail(points){line(points,'#000000aa',21);const g=gradient(150,0,650,0,[[0,'#252b31'],[.12,'#d8dfe3'],[.24,'#545c64'],[.4,'#9aa5ad'],[.51,'#f0f4f6'],[.56,'#66717b'],[.8,'#b9c2c9'],[1,'#333e48']]);line(points,g,15);line(points.map(([x,y])=>[x-2,y-2]),'#f2f7fc66',1.3);line(points.map(([x,y])=>[x+4,y+1]),'#0000005c',2);}
 function draw(){
-  if(!width)return;ctx.clearRect(0,0,width,height);ctx.save();ctx.translate(originX,originY);ctx.scale(scale,scale);hitAreas=[];
-  const shadow=ctx.createRadialGradient(383,451,10,383,451,225);shadow.addColorStop(0,'#26382c25');shadow.addColorStop(1,'#26382c00');ctx.fillStyle=shadow;ctx.save();ctx.translate(380,457);ctx.scale(1,.25);ctx.beginPath();ctx.arc(0,0,240,0,Math.PI*2);ctx.fill();ctx.restore();
-  // Back rail and machine housing.
-  rail([[368,181],[357,86],[364,57],[392,51],[432,95],[562,368],[561,416]]);
-  polygon([[187,185],[434,122],[551,415],[324,485]],'#43554a');
-  polygon([[187,185],[324,460],[324,485],[182,219]],'#607262');
-  polygon([[324,460],[551,395],[551,425],[324,489]],'#283a31');
-  line([[333,476],[540,419]],'#96a08f',2);
-  // The console is deliberately small: the steps carry the records.
-  rail([[290,163],[279,92]]);
-  polygon([[241,93],[324,70],[344,101],[258,127]],'#35463a','#24352c',2);
-  polygon([[255,95],[315,79],[328,99],[269,115]],'#b8c6a8','#6b7b68');
-  ctx.save();ctx.transform(1,-.27,.5,.85,267,101);label('B / S',0,0,10,'#3b5745');ctx.restore();
-  ctx.beginPath();ctx.arc(328,108,3,0,Math.PI*2);ctx.fillStyle='#e3794c';ctx.fill();
-  const entries=rows();const display=entries.slice().reverse();const moveCount=entries.filter(x=>x.type==='move').length;
-  const phase=(gestureOffset*.24+animationOffset)%43;
-  for(let i=-1;i<8;i++){
-    const z=i+phase/43;if(z<0||z>7)continue;
-    const x=194+z*18,y=181+z*39;
-    const item=display[i+historyOffset];
-    const active=item?.id===selectedId;
-    let top=item?.type==='meal'?'#e8d1ad':item?.type==='move'?'#b7c9b8':'#cbd0b9';
-    if(active)top=item?.type==='move'?'#a7c9b8':'#efc598';
-    const tread=[[x,y],[x+225,y-62],[x+245,y-39],[x+20,y+23]];
-    polygon([[x+20,y+23],[x+245,y-39],[x+245,y-20],[x+20,y+42]],'#536650','#3e5143');
-    polygon(tread,top,'#4b5c49',1.2);
-    // Fine ribs make the object read as a stair climber, not a floating chart.
-    for(let k=1;k<14;k++){const u=k/14;line([[x+u*225+4,y-u*62+4],[x+u*225+16,y-u*62+17]],'#68765b55',.8);}
+  if(!width)return;ctx.clearRect(0,0,width,height);ctx.save();ctx.translate(originX,originY);ctx.scale(scale,scale);hitAreas=[];hitZones=[];
+  const halo=ctx.createRadialGradient(400,602,15,400,602,270);halo.addColorStop(0,'#9db5c52a');halo.addColorStop(.5,'#617d9410');halo.addColorStop(1,'#66829900');ctx.save();ctx.translate(390,622);ctx.scale(1,.27);ctx.fillStyle=halo;ctx.fillRect(-500,-500,1000,1000);ctx.restore();
+  const floor=gradient(180,610,620,630,[[0,'#ffffff00'],[.5,'#aebfcb0b'],[1,'#ffffff00']]);line([[145,630],[653,630]],floor,1);
+  rail([[466,252],[449,157],[448,102],[462,81],[486,86],[509,124],[627,474],[624,534]]);
+  const body=gradient(180,240,620,590,[[0,'#353c44'],[.3,'#171c21'],[.65,'#333c44'],[1,'#0a0e12']]);
+  poly([[183,249],[458,173],[625,554],[351,631]],body,'#68768066',1.2);
+  poly([[183,249],[351,606],[351,637],[172,284]],gradient(175,0,350,0,[[0,'#727f88'],[.12,'#3c454e'],[.55,'#151c23'],[1,'#53606c']]),'#b8c5ce33');
+  poly([[351,606],[625,531],[625,563],[351,640]],gradient(350,606,350,640,[[0,'#86939d'],[.12,'#273039'],[.8,'#111820'],[1,'#4a5966']]),'#95a5b044');
+  line([[182,249],[351,606],[622,532]],'#c3d0d966',1.3);
+  rail([[318,207],[303,139]]);
+  poly([[251,120],[369,89],[410,139],[286,174]],gradient(250,100,400,175,[[0,'#9da8b0'],[.15,'#3b454e'],[.85,'#0e151c'],[1,'#88949e']]),'#b8c8d455',1);
+  poly([[264,122],[364,97],[392,135],[290,162]],'#04080c','#84939e66');
+  const summary=D.summary(rows());
+  ctx.save();ctx.transform(1,-.27,.6,.87,283,130);label(`${String(summary.meals).padStart(2,'0')} / ${String(summary.minutes).padStart(2,'0')}`,0,0,17,'#eff6fc');label('MEALS     MIN',1,12,5.7,'#8699a9');ctx.restore();
+  ctx.beginPath();ctx.arc(395,151,9,0,Math.PI*2);ctx.fillStyle='#202a33';ctx.fill();ctx.strokeStyle='#aabcc966';ctx.stroke();label('↑',391,155,12,'#e3edf4');hitZones.push({kind:'move',points:[[382,137],[408,137],[408,164],[382,164]]});
+  const list=[null,...rows().slice().reverse()],base=Math.floor(beltPosition),fraction=beltPosition-base;
+  const phase=gestureOffset*.18+animationOffset;
+  const moveCount=rows().filter(e=>e.type==='move').length;
+  for(let i=-1;i<=8;i++){
+    const z=i-fraction+phase/43;if(z<-.05||z>7.05)continue;
+    const item=list[base+i],x=193+z*19,y=246+z*43,active=item?.id===selectedId;
+    const delta=item?.id===extractedId?extractX/scale:0;ctx.save();ctx.translate(delta,0);
+    const top=[[x,y],[x+260,y-70],[x+282,y-45],[x+22,y+25]],front=[[x+22,y+25],[x+282,y-45],[x+282,y-24],[x+22,y+46]];
+    if(delta){poly([[x-delta,y],[x+260-delta,y-70],[x+282-delta,y-24],[x+22-delta,y+46]],'#020305','#6d778244');}
+    poly(front,gradient(x,y+20,x,y+48,[[0,'#57636f'],[.14,'#171e26'],[.85,'#0b1017'],[1,'#81909b']]),'#a6b6c133',.7);
+    const metal=gradient(x,y,x+270,y-60,[[0,active?'#8997a3':'#4d5863'],[.12,active?'#c2cdd5':'#89959e'],[.32,'#424d58'],[.55,active?'#a8bac7':'#788691'],[.78,'#3e4b57'],[1,'#a2afb9']]);
+    poly(top,metal,'#d3e3ed55',.8);line([[x+1,y],[x+261,y-70]],'#edf6fd77',.8);line([[x+22,y+25],[x+281,y-45]],'#e2edf4aa',1);
+    for(let k=1;k<36;k++){const u=k/36;line([[x+u*260+3,y-u*70+5],[x+u*260+17,y-u*70+19]],'#080d1360',.8);line([[x+u*260+4,y-u*70+5],[x+u*260+18,y-u*70+19]],'#ecf3f72a',.45);}
     if(item){
-      ctx.save();ctx.transform(1,-.275,.65,.75,x+52,y-5);
-      ctx.fillStyle=item.type==='meal'?'#a14b2d':'#2d6d58';ctx.globalAlpha=.85;
-      ctx.font='22px "Segoe UI Emoji","Apple Color Emoji",sans-serif';ctx.fillText(item.icon,0,3);
-      ctx.font='bold 10px "Malgun Gothic",sans-serif';ctx.fillText(item.name.length>11?item.name.slice(0,11)+'…':item.name,33,0);
-      ctx.font='8px monospace';ctx.globalAlpha=.7;ctx.fillText(item.at.slice(11),34,12);ctx.restore();
-      hitAreas.push({x:x+113,y:y-13,entry:item});
-    }else if(i===0&&!entries.length){ctx.save();ctx.transform(1,-.275,.65,.75,x+72,y-4);label('YOUR FIRST TRACE',0,0,9,'#697960');ctx.restore();}
-    // Reverse movement adds teal etchings while the meal stamp stays intact.
-    if(moveCount>0&&item?.type==='meal'){
-      const lines=Math.min(moveCount,5);for(let j=0;j<lines;j++)line([[x+29+j*13,y+26-j*3.5],[x+37+j*13,y+32-j*3.5]],'#91c2a7',2);
+      ctx.save();ctx.transform(1,-.269,.72,.79,x+45,y+1);
+      const name=item.name.length>15?item.name.slice(0,15)+'…':item.name;
+      label(item.type==='meal'?'↓':'↑',0,0,14,'#f4f8fc');
+      ctx.shadowColor='#000';ctx.shadowBlur=1.7;ctx.shadowOffsetY=1;label(name,24,-1,11,'#f1f5f8','"Malgun Gothic","Apple SD Gothic Neo",sans-serif');ctx.shadowBlur=0;ctx.shadowOffsetY=0;label(item.at.slice(11),24,11,7,'#d4dde3');ctx.restore();
+      hitAreas.push({points:top.map(([px,py])=>[px+delta,py]),entry:item,index:base+i});
+      if(item.type==='move'){for(let j=0;j<Math.min(12,Math.max(1,Math.ceil(item.amount/5)));j++)line([[x+41+j*12,y+28-j*3.2],[x+44+j*12,y+36-j*3.2]],'#d3eafba6',1.4);}
+      else if(moveCount){for(let j=0;j<Math.min(moveCount,5);j++)line([[x+29+j*11,y+28-j*3],[x+36+j*11,y+33-j*3]],'#a9c1d17a',1);}
+    }else{
+      hitAreas.push({points:top.map(([px,py])=>[px+delta,py]),entry:null,index:base+i});
+      if(base+i===0){ctx.save();ctx.transform(1,-.269,.72,.79,x+100,y-8);label('+',0,0,20,'#f0f7fbcc');label('PRESS / HOLD',28,-2,7,'#dae5ecaa');ctx.restore();}
     }
-    if(flash>0&&item?.id===selectedId){ctx.globalAlpha=flash*.25;polygon(tread,item.type==='meal'?'#ff9b55':'#88dfb5',null);ctx.globalAlpha=1;}
+    if(flash>0&&item?.id===selectedId){ctx.globalAlpha=flash*.35;poly(top,'#f3faff',null);ctx.globalAlpha=1;}
+    ctx.restore();
   }
-  // Front rail curves around the stair belt.
-  rail([[183,265],[165,179],[165,130],[181,112],[202,115],[222,147],[348,416],[365,434],[389,424]]);
-  line([[165,179],[183,265]],'#abb5a1',2);
-  polygon([[327,476],[543,418],[548,435],[335,495]],'#394b3f');
-  label('BITE / STRIDE',375,469,9,'#b9c6b1');
-  for(const [x,y] of [[339,480],[532,429]]){ctx.beginPath();ctx.arc(x,y,2,0,7);ctx.fillStyle='#aebba4';ctx.fill();}
+  rail([[180,350],[160,247],[159,183],[174,163],[196,167],[220,205],[366,554],[386,577],[409,565]]);
+  // Heavy end cap and exposed fasteners anchor the belt in a physical chassis.
+  poly([[351,615],[627,540],[634,560],[359,639]],gradient(350,610,365,640,[[0,'#a9b5bf'],[.1,'#3b4753'],[.75,'#111b25'],[1,'#6c7e8f']]),'#bcccd866');
+  for(const [x,y]of [[368,625],[619,555]]){ctx.beginPath();ctx.arc(x,y,2.5,0,Math.PI*2);ctx.fillStyle='#a5b5c0';ctx.fill();line([[x-1,y],[x+1,y]],'#18222c',.8);}
+  ctx.save();ctx.transform(1,-.27,.3,.9,420,611);label('B / S     •     '+selectedDate.slice(5).replace('-','.'),0,0,7,'#b5c5d2');ctx.restore();
   if(pending){
-    ctx.save();const px=282,py=212+Math.max(-45,Math.min(65,gestureOffset*.4));ctx.translate(px,py);
-    ctx.shadowColor='#28382d33';ctx.shadowBlur=14;ctx.fillStyle=pending.type==='meal'?'#fae0c0':'#cce2d3';ctx.strokeStyle=pending.type==='meal'?'#dc5c35':'#33796f';ctx.lineWidth=1.4;ctx.beginPath();ctx.roundRect(-30,-34,145,58,8);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
-    label(pending.icon,-19,4,28,'#292d29','"Segoe UI Emoji","Apple Color Emoji",sans-serif');label(pending.name.slice(0,8),22,-6,10,'#394332','"Malgun Gothic",sans-serif');label(pending.type==='meal'?'PUSH DOWN ↓':'PULL UP ↑',22,10,8,pending.type==='meal'?'#b54e2c':'#33796f');ctx.restore();
+    const px=320,py=279+clamp(gestureOffset*.35,-50,55);ctx.save();ctx.translate(px,py);ctx.shadowColor='#0009';ctx.shadowBlur=25;
+    poly([[-28,-22],[127,-63],[144,-39],[-11,3]],gradient(0,0,100,-45,[[0,'#d2dde5'],[.3,'#6b7c8a'],[.7,'#899eaf'],[1,'#ecf6fd']]),'#ecf7fcdd',1.1);ctx.shadowBlur=0;ctx.transform(1,-.269,.72,.79,-3,-10);label(pending.type==='meal'?'↓':'↑',0,0,17,'#fff');label(pending.name.slice(0,10),23,0,10,'#fff','"Malgun Gothic",sans-serif');ctx.restore();
   }
   ctx.restore();
+  if(holdPoint&&holdStart){const progress=clamp((performance.now()-holdStart)/520,0,1);ctx.beginPath();ctx.arc(holdPoint.x,holdPoint.y,19,-Math.PI/2,-Math.PI/2+Math.PI*2*progress);ctx.strokeStyle='#edf8ff';ctx.lineWidth=1.3;ctx.stroke();}
 }
-function animateStamp(direction){
-  cancelAnimationFrame(animationFrame);if(reduceMotion){animationOffset=0;flash=0;draw();return;}
-  const start=performance.now();
-  function tick(now){const t=Math.min(1,(now-start)/560);animationOffset=direction*43*(1-Math.pow(1-t,3));flash=1-t;draw();if(t<1)animationFrame=requestAnimationFrame(tick);else{animationOffset=0;flash=0;draw();}}
-  animationFrame=requestAnimationFrame(tick);
-}
-const pointers=new Map();let startY=0,startX=0,startHistory=0,pinching=false,pinchDistance=0,dragMoved=false;
-const distance=()=>{const a=[...pointers.values()];return Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);};
+function animateStamp(direction){cancelAnimationFrame(stampFrame);if(reduceMotion){animationOffset=0;flash=0;draw();return;}const start=performance.now();function tick(now){const t=clamp((now-start)/520,0,1);animationOffset=direction*43*(1-Math.pow(1-t,3));flash=1-t;draw();if(t<1)stampFrame=requestAnimationFrame(tick);else{animationOffset=0;flash=0;draw();}}stampFrame=requestAnimationFrame(tick);}
+function stopMotion(){cancelAnimationFrame(motionFrame);motionFrame=0;}
+function inertia(velocity){stopMotion();if(reduceMotion||Math.abs(velocity)<.012)return;let last=performance.now();function tick(now){const delta=Math.min(32,now-last);last=now;velocity*=Math.pow(.92,delta/16);const max=rows().length,next=clamp(beltPosition+velocity*delta/16,0,max);if(next===0||next===max)velocity*=.4;beltPosition=next;draw();if(Math.abs(velocity)>.003)motionFrame=requestAnimationFrame(tick);else motionFrame=0;}motionFrame=requestAnimationFrame(tick);}
+function inside(point,points){let yes=false;for(let i=0,j=points.length-1;i<points.length;j=i++){const [xi,yi]=points[i],[xj,yj]=points[j];if(((yi>point.y)!==(yj>point.y))&&(point.x<(xj-xi)*(point.y-yi)/(yj-yi)+xi))yes=!yes;}return yes;}
+function localPoint(event){const r=canvas.getBoundingClientRect();return {x:(event.clientX-r.left-originX)/scale,y:(event.clientY-r.top-originY)/scale};}
+function pick(event){const point=localPoint(event);return hitZones.find(h=>inside(point,h.points))||hitAreas.slice().reverse().find(h=>inside(point,h.points))||null;}
+function clearHold(){clearTimeout(holdTimer);cancelAnimationFrame(holdFrame);holdStart=0;holdPoint=null;}
+const pointers=new Map();let startX=0,startY=0,startPosition=0,lastY=0,lastTime=0,velocity=0,axis=null,downHit=null,holdFired=false,pinching=false,pinchDistance=0,pinchOpen=false,dragMoved=false;
+function resetPointers(){for(const id of pointers.keys()){try{if(canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);}catch{}}pointers.clear();pinching=false;clearHold();gestureOffset=0;extractX=0;extractedId=null;}
+window.addEventListener('blur',()=>{resetPointers();stopMotion();draw();});
+const threshold=()=>Math.min(135,height*.22),deleteThreshold=()=>Math.min(135,width*.28);
+const distance=()=>{const p=[...pointers.values()];return Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);};
 canvas.addEventListener('pointerdown',event=>{
-  if(event.button!==0&&event.pointerType==='mouse')return;
-  canvas.setPointerCapture(event.pointerId);pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
-  if(pointers.size===1){startY=event.clientY;startX=event.clientX;startHistory=historyOffset;dragMoved=false;pinching=false;}
-  else if(pointers.size===2){pinching=true;pinchDistance=distance();gestureOffset=0;text('gestureStatus','두 손가락으로 벌려 하루를 펼쳐 보세요.');}
+  if(event.pointerType==='mouse'&&event.button!==0)return;stopMotion();cancelAnimationFrame(stampFrame);animationOffset=0;flash=0;
+  try{canvas.setPointerCapture(event.pointerId);}catch{}pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if(pointers.size===1){startX=event.clientX;startY=lastY=event.clientY;lastTime=performance.now();velocity=0;startPosition=beltPosition;axis=null;downHit=pick(event);dragMoved=false;holdFired=false;pinching=false;extractX=0;extractedId=null;
+    if(!pending&&downHit&&!downHit.kind){holdStart=performance.now();const r=canvas.getBoundingClientRect();holdPoint={x:event.clientX-r.left,y:event.clientY-r.top};
+      function ring(){draw();if(holdStart)holdFrame=requestAnimationFrame(ring);}holdFrame=requestAnimationFrame(ring);
+      holdTimer=setTimeout(()=>{holdFired=true;const entry=downHit?.entry;clearHold();openEditor(entry?.type||'meal',entry||null);draw();},520);
+    }
+    draw();
+  }else{clearHold();pinching=true;pinchOpen=false;pinchDistance=pointers.size===2?distance():pinchDistance;gestureOffset=0;extractX=0;extractedId=null;draw();}
 });
 canvas.addEventListener('pointermove',event=>{
   if(!pointers.has(event.pointerId))return;pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
-  if(pinching){if(pointers.size===2){const delta=distance()-pinchDistance;if(delta>45)setExpanded(true);if(delta< -45)setExpanded(false);}return;}
-  const delta=event.clientY-startY;if(Math.abs(delta)>7)dragMoved=true;
-  if(pending){
-    const signed=pending.type==='meal'?delta:-delta,threshold=Math.min(130,height*.3);gestureOffset=Math.max(-threshold,Math.min(threshold,delta));const ratio=Math.max(0,Math.min(1,signed/threshold));$('gestureProgress').style.width=`${ratio*100}%`;
-    text('gestureStatus',signed< -15?(pending.type==='meal'?'한 끼는 아래로 밀어 주세요 ↓':'운동은 위로 밀어 주세요 ↑'):ratio>=1?'손을 떼면 기록이 새겨져요.':`${Math.round(ratio*100)}% · ${pending.type==='meal'?'아래로 ↓':'위로 ↑'}`);
-  }else{
-    const count=rows().length;historyOffset=Math.max(0,Math.min(Math.max(0,count-1),startHistory+Math.round(-delta/50)));gestureOffset=delta%50;
-    const item=rows().slice().reverse()[historyOffset];selectedId=item?.id||null;text('gestureStatus',item?`${item.at.slice(11)} · ${item.name} · ${item.amount}${unit(item)}`:'아직 기록이 없어요. 첫 순간을 남겨 보세요.');
+  if(pinching){if(pointers.size===2&&distance()-pinchDistance>50){pinchOpen=true;hint('손을 떼면 기록이 펼쳐져요.',0);}return;}
+  if(holdFired)return;
+  const dx=event.clientX-startX,dy=event.clientY-startY,now=performance.now();
+  if(Math.hypot(dx,dy)>8){dragMoved=true;clearHold();}
+  if(!axis&&dragMoved)axis=!pending&&downHit?.entry&&Math.abs(dx)>Math.abs(dy)*1.25?'x':'y';
+  if(axis==='x'){
+    extractedId=downHit.entry.id;selectedId=extractedId;peekVisible=false;extractX=clamp(dx,-220,220);renderPeek();hint(Math.abs(dx)>=deleteThreshold()?'손을 떼면 기록이 분리돼요.':'옆으로 빼내기 · 놓으면 돌아가요.',0);draw();return;
   }
-  draw();
+  if(axis==='y'){
+    if(pending){gestureOffset=clamp(dy,-threshold(),threshold());const signed=pending.type==='meal'?dy:-dy,ratio=clamp(signed/threshold(),0,1);$('gestureProgress').style.width=`${ratio*100}%`;hint(signed< -12?(pending.type==='meal'?'한 끼는 아래로 ↓':'운동은 위로 ↑'):ratio>=1?'손을 떼면 새겨져요.':pending.type==='meal'?'아래로 밀어 주세요. ↓':'위로 밀어 주세요. ↑',0);}
+    else{beltPosition=clamp(startPosition-dy/68,0,rows().length);velocity=-(event.clientY-lastY)/68/(Math.max(1,now-lastTime)/16);peekVisible=false;renderPeek();}
+    lastY=event.clientY;lastTime=now;draw();
+  }
 });
 function endPointer(event,cancel=false){
-  if(!pointers.has(event.pointerId))return;pointers.delete(event.pointerId);
-  if(pinching){if(!pointers.size){pinching=false;gestureOffset=0;draw();}return;}
-  const delta=event.clientY-startY;
-  if(!cancel&&pending){const signed=pending.type==='meal'?delta:-delta;if(signed>=Math.min(130,height*.3)){stamp();}else{text('gestureStatus','아직 저장 전이에요. 끝까지 밀고 손을 떼어 주세요.');}}
-  else if(!cancel&&!dragMoved&&!pending){const r=canvas.getBoundingClientRect(),x=(event.clientX-r.left-originX)/scale,y=(event.clientY-r.top-originY)/scale;const hit=hitAreas.find(a=>Math.abs(x-a.x)<105&&Math.abs(y-a.y)<20);if(hit)openEditor(hit.entry.type,hit.entry);}
-  gestureOffset=0;$('gestureProgress').style.width='0%';draw();
+  if(!pointers.has(event.pointerId))return;clearHold();pointers.delete(event.pointerId);
+  if(pinching){if(cancel)pinchOpen=false;if(!pointers.size){pinching=false;gestureOffset=0;draw();if(pinchOpen){pinchOpen=false;openArchive();hint('지나온 순간을 펼쳤어요.');}}return;}
+  if(holdFired){gestureOffset=0;draw();return;}
+  const dx=event.clientX-startX,dy=event.clientY-startY;
+  if(!cancel&&axis==='x'&&downHit?.entry&&Math.abs(dx)>=deleteThreshold()){removeRecord(downHit.entry.id);}
+  else if(!cancel&&pending&&axis==='y'){const signed=pending.type==='meal'?dy:-dy;if(signed>=threshold())stamp();else hint('아직 저장 전이에요. 끝까지 밀어 주세요.',0);}
+  else if(!cancel&&!pending&&axis==='y'){if(performance.now()-lastTime<90)inertia(velocity);hint('손을 대면 멈춰요. 길게 누르면 기록을 열어요.');}
+  else if(!cancel&&!dragMoved&&!pending){
+    if(downHit?.kind==='move')openEditor('move');
+    else if(downHit?.entry){selectedId=downHit.entry.id;peekVisible=true;renderPeek();hint('길게 눌러 수정 · 옆으로 밀어 분리');}
+    else if(downHit){selectedId=null;peekVisible=false;renderPeek();hint('빈 계단을 길게 눌러 한 끼를 남겨요.');}
+  }
+  gestureOffset=0;extractX=0;extractedId=null;$('gestureProgress').style.width='0%';draw();
 }
 canvas.addEventListener('pointerup',event=>endPointer(event));canvas.addEventListener('pointercancel',event=>endPointer(event,true));
+canvas.addEventListener('contextmenu',event=>event.preventDefault());
 canvas.addEventListener('keydown',event=>{
-  if(!['ArrowUp','ArrowDown','Enter',' '].includes(event.key))return;event.preventDefault();
-  if(pending){if(event.key==='Enter'||event.key===' '||(pending.type==='meal'&&event.key==='ArrowDown')||(pending.type==='move'&&event.key==='ArrowUp'))stamp();else notify(pending.type==='meal'?'한 끼는 아래 방향키로 새겨요.':'움직임은 위 방향키로 새겨요.');}
-  else if(event.key==='ArrowUp'||event.key==='ArrowDown'){const list=rows().slice().reverse();historyOffset=Math.max(0,Math.min(list.length-1,historyOffset+(event.key==='ArrowUp'?1:-1)));const item=list[historyOffset];selectedId=item?.id;render();if(item)text('gestureStatus',`${item.at.slice(11)} · ${item.name}`);}
-  else{const item=doc().entries.find(x=>x.id===selectedId);if(item)openEditor(item.type,item);}
+  if(!['ArrowUp','ArrowDown','Enter',' ','Delete','Escape'].includes(event.key))return;event.preventDefault();stopMotion();
+  if(event.key==='Escape'){if(pending)$('cancelPending').click();else{peekVisible=false;renderPeek();}return;}
+  if(pending){if(event.key==='Enter'||event.key===' '||(pending.type==='meal'&&event.key==='ArrowDown')||(pending.type==='move'&&event.key==='ArrowUp'))stamp();else hint(pending.type==='meal'?'한 끼는 아래 방향키 ↓':'운동은 위 방향키 ↑',0);return;}
+  if(event.key==='ArrowUp'||event.key==='ArrowDown'){const all=rows().slice().reverse();const current=all.findIndex(e=>e.id===selectedId),index=clamp(current+(event.key==='ArrowUp'?1:-1),0,Math.max(0,all.length-1));selectedId=all[index]?.id||null;beltPosition=clamp(index,0,all.length);peekVisible=Boolean(selectedId);renderPeek();draw();}
+  else if(event.key==='Delete'&&selectedId){editing=selectedId;$('confirmDialog').showModal();}
+  else if(event.key==='Enter'||event.key===' '){const entry=doc().entries.find(e=>e.id===selectedId);openEditor(entry?.type||'meal',entry||null);}
 });
-new ResizeObserver(resize).observe(canvas);
-render();resize();
-if(loaded.migrated)notify('이전 식사 기록을 가져왔어요. 식탁의 미확정 메모도 보관했어요.');
+new ResizeObserver(resize).observe(canvas);render();resize();
+if(loaded.migrated){persist();notify('이전 기록과 식탁 메모를 가져왔어요.');}
+else if(loaded.error)notify('저장 데이터를 읽지 못해 원본을 보존했어요. 백업을 불러올 수 있어요.');
+hint('빈 계단을 길게 눌러 시작하세요.',10000);
 })();
