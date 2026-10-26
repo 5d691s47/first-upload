@@ -17,7 +17,7 @@ const format=value=>new Intl.NumberFormat('ko-KR').format(value);
 const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
 const el=(tag,cls,value)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(value!=null)n.textContent=value;return n;};
 function hint(value,quietAfter=6500){text('gestureStatus',value);$('gestureStatus').classList.remove('quiet');clearTimeout(hintTimer);if(quietAfter)hintTimer=setTimeout(()=>$('gestureStatus').classList.add('quiet'),quietAfter);}
-function notify(message,undo=null){const active=document.activeElement?.closest('dialog[open]')||Array.from(document.querySelectorAll('dialog[open]')).at(-1);(active||document.body).append(document.getElementById("toast"));clearTimeout(toastTimer);undoAction=undo;text('toastText',message);$('undoButton').hidden=!undo;$('toast').hidden=false;toastTimer=setTimeout(()=>{$('toast').hidden=true;undoAction=null;},undo?8500:3800);}
+function notify(message,undo=null){$('toast').classList.remove('floor-effect-toast');const active=document.activeElement?.closest('dialog[open]')||Array.from(document.querySelectorAll('dialog[open]')).at(-1);(active||document.body).append(document.getElementById("toast"));clearTimeout(toastTimer);undoAction=undo;text('toastText',message);$('undoButton').hidden=!undo;$('toast').hidden=false;toastTimer=setTimeout(()=>{$('toast').hidden=true;undoAction=null;},undo?8500:3800);}
 $('undoButton').addEventListener('click',()=>{const action=undoAction;undoAction=null;$('toast').hidden=true;clearTimeout(toastTimer);action?.();});
 function persist(target=doc()){
   if(target!==personal)return true;
@@ -83,7 +83,7 @@ function stamp(){
 function removeRecord(id,fromBelt=false){
   const target=doc(),index=target.entries.findIndex(e=>e.id===id);if(index<0)return;
   const [entry]=target.entries.splice(index,1);persist(target);selectedId=null;peekVisible=false;extractX=0;beltPosition=clamp(beltPosition,0,Math.max(0,target.entries.length));render();if(!fromBelt)clickSound(true);
-  notify('기록을 분리했어요.',()=>{if(!target.entries.some(e=>e.id===entry.id))target.entries.splice(Math.min(index,target.entries.length),0,entry);persist(target);render();hint('기록을 되돌렸어요.');});
+  notify('기록을 분리했어요.',()=>{chromeRenderer?.cancelFalls();sparkFX?.clear();if(!target.entries.some(e=>e.id===entry.id))target.entries.splice(Math.min(index,target.entries.length),0,entry);persist(target);render();hint('기록을 되돌렸어요.');});if(fromBelt)$('toast').classList.add('floor-effect-toast');
 }
 $('stampButton').addEventListener('click',stamp);$('cancelPending').addEventListener('click',()=>{pending=null;gestureOffset=0;render();hint('아직 새기지 않은 기록을 내려놓았어요.');});
 $('addMeal').addEventListener('click',()=>openEditor('meal'));$('addMove').addEventListener('click',()=>openEditor('move'));$('unfoldButton').addEventListener('click',openArchive);
@@ -178,7 +178,7 @@ $('analyzeButton').addEventListener('click',async()=>{
 
 // Locally drawn metal: gradients, bevels, brushed ribs, and specular handrails.
 const canvas=$('machine'),ctx=canvas.getContext('2d');
-const sparkFX=globalThis.SparkEffects?new SparkEffects($('sparkCanvas'),{reducedMotion:reduceMotion}):null;
+const sparkFX=globalThis.SparkEffects?new SparkEffects($('sparkCanvas'),{reducedMotion:reduceMotion,onImpact:()=>clickSound(true)}):null;
 let width=0,height=0,scale=1,originX=0,originY=0,beltPosition=0,gestureOffset=0,extractX=0,extractedId=null;
 let animationOffset=0,flash=0,stampFrame=0,motionFrame=0,holdFrame=0,holdTimer=0,holdStart=0,holdPoint=null,hitAreas=[],hitZones=[];
 let chromeRenderer=null;
@@ -264,7 +264,7 @@ function pick(event){const point=localPoint(event);return hitZones.find(h=>insid
 function clearHold(){clearTimeout(holdTimer);cancelAnimationFrame(holdFrame);holdStart=0;holdPoint=null;}
 const pointers=new Map();let startX=0,startY=0,startPosition=0,lastY=0,lastTime=0,velocity=0,dragStepPitch=68,axis=null,downHit=null,holdFired=false,pinching=false,pinchDistance=0,pinchOpen=false,dragMoved=false;
 function resetPointers(){for(const id of pointers.keys()){try{if(canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);}catch{}}pointers.clear();pinching=false;clearHold();gestureOffset=0;extractX=0;extractedId=null;}
-window.addEventListener('blur',()=>{resetPointers();stopMotion();sparkFX?.clear();draw();});
+window.addEventListener('blur',()=>{resetPointers();stopMotion();sparkFX?.clear();chromeRenderer?.cancelFalls();draw();});
 const threshold=()=>Math.min(135,height*.22),deleteThreshold=()=>Math.min(135,width*.28);
 const distance=()=>{const p=[...pointers.values()];return Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);};
 canvas.addEventListener('pointerdown',event=>{
@@ -305,7 +305,15 @@ function separationScrape(dx){
   const distance=Math.abs(dx-lastSparkDrag);if(distance<3)return;const strength=clamp(distance/22,.15,1);
   if(sparkFX?.scrape(point,direction,strength))scrapeSound(strength);lastSparkDrag=dx;
 }
-function separationBurst(dx){const direction=dx>=0?1:-1,point=separationPoint(direction);if(point)sparkFX?.burst(point,direction);detachSound();}
+function separationBurst(dx){
+  const direction=dx>=0?1:-1,point=separationPoint(direction);
+  if(!reduceMotion){
+    const fall=chromeRenderer?.detachTread(downHit?.entry?.id);
+    if(fall)sparkFX?.drop(fall.start,fall.floor,fall.duration);
+    else if(point)sparkFX?.drop({x:point.x,y:point.y+5},{x:width*.5+direction*width*.055,y:Math.min(height-130,height*.82)},.6);
+  }
+  detachSound();
+}
 function endPointer(event,cancel=false){
   if(!pointers.has(event.pointerId))return;clearHold();pointers.delete(event.pointerId);
   if(pinching){if(cancel)pinchOpen=false;if(!pointers.size){pinching=false;gestureOffset=0;draw();if(pinchOpen){pinchOpen=false;openArchive();hint('지나온 순간을 펼쳤어요.');}}return;}
@@ -334,7 +342,7 @@ canvas.addEventListener('keydown',event=>{
 });
 new ResizeObserver(resize).observe(canvas);render();resize();
 let lastIdleFrame=0;
-function idleFrame(now){if(pointers.size||document.querySelector('dialog[open]'))errorLastTime=now;if((chromeRenderer||errorState?.active)&&!document.hidden&&now-lastIdleFrame>50&&!pointers.size&&!document.querySelector('dialog[open]')){lastIdleFrame=now;draw();}requestAnimationFrame(idleFrame);}
+function idleFrame(now){if(pointers.size||document.querySelector('dialog[open]'))errorLastTime=now;if((chromeRenderer||errorState?.active)&&!document.hidden&&now-lastIdleFrame>(chromeRenderer?.falling.length?16:50)&&(!pointers.size||chromeRenderer?.falling.length)&&!document.querySelector('dialog[open]')){lastIdleFrame=now;draw();}requestAnimationFrame(idleFrame);}
 if(!reduceMotion)requestAnimationFrame(idleFrame);
 let lastCalendarDay=D.day();
 function refreshCalendarDay(){const current=D.day();if(current===lastCalendarDay)return;if(selectedDate===lastCalendarDay){selectedDate=current;beltPosition=0;selectedId=null;peekVisible=false;}lastCalendarDay=current;render();}

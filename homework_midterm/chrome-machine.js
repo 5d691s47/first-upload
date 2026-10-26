@@ -5,7 +5,7 @@ const T=globalThis.THREE;
 if(!T)return;
 class ChromeMachine {
  constructor(canvas){
-  this.canvas=canvas;this.width=0;this.height=0;this.steps=[];this.labels=new Map();this.pose=0;this.lastFrame=0;this.disposed=false;
+  this.canvas=canvas;this.width=0;this.height=0;this.steps=[];this.falling=[];this.labels=new Map();this.pose=0;this.lastFrame=0;this.disposed=false;
   this.renderer=new T.WebGLRenderer({canvas,antialias:true,alpha:false,powerPreference:'high-performance'});
   this.renderer.setClearColor(0x000000,1);this.renderer.outputColorSpace=T.SRGBColorSpace;this.renderer.toneMapping=T.ACESFilmicToneMapping;this.renderer.toneMappingExposure=1;
   this.scene=new T.Scene();this.scene.background=new T.Color(0x000000);
@@ -98,9 +98,31 @@ class ChromeMachine {
   if(this.bloom){const w=Math.floor(width*dpr),h=Math.floor(height*dpr);this.beauty.setSize(w,h);this.blurA.setSize(Math.max(1,w>>1),Math.max(1,h>>1));this.blurB.setSize(Math.max(1,w>>1),Math.max(1,h>>1));this.finalMaterial.uniforms.pixel.value.set(1/w,1/h);}
  }
  project(point,group=this.machine){const v=new T.Vector3(...point);group.localToWorld(v);v.project(this.camera);return [(v.x+1)*this.width/2,(1-v.y)*this.height/2];}
+ detachTread(id){
+  const slot=this.steps.find(s=>s.group.visible&&s.entryId===id);if(!slot)return null;
+  const group=slot.group.clone(true);group.scale.set(1,1,1);const textures=[];
+  group.traverse(node=>{if(!node.material)return;node.material=node.material.clone();node.material.transparent=true;node.material.depthWrite=false;if(node.material.map===slot.texture){const copy=document.createElement('canvas');copy.width=slot.canvas.width;copy.height=slot.canvas.height;copy.getContext('2d').drawImage(slot.canvas,0,0);node.material.map=new T.CanvasTexture(copy);node.material.map.colorSpace=T.SRGBColorSpace;textures.push(node.material.map);}});
+  const start=group.position.clone(),target=new T.Vector3(start.x*.45,.2,2.25),duration=Math.max(.38,Math.min(.82,Math.sqrt(Math.max(.1,start.y-.2)/5)));
+  this.machine.add(group);this.machine.updateMatrixWorld(true);const screenStart=this.project([0,-.1,0],group),screenFloor=this.project([target.x,.15,target.z]);
+  this.falling.push({group,start,target,duration,born:performance.now(),textures});
+  while(this.falling.length>3)this.disposeFall(this.falling.shift());
+  return {start:{x:screenStart[0],y:screenStart[1]},floor:{x:screenFloor[0],y:screenFloor[1]},duration};
+ }
+ disposeFall(fall){this.machine.remove(fall.group);fall.group.traverse(node=>{node.material?.dispose();if(node.isInstancedMesh)node.dispose();});for(const texture of fall.textures)texture.dispose();}
+ cancelFalls(){for(const fall of this.falling)this.disposeFall(fall);this.falling=[];}
+ updateFalls(now){
+  this.falling=this.falling.filter(fall=>{
+   const age=(now-fall.born)/1000,t=Math.min(1,age/fall.duration),ease=t*t*(3-2*t);
+   fall.group.position.set(fall.start.x+(fall.target.x-fall.start.x)*t,fall.start.y+(fall.target.y-fall.start.y)*t*t,fall.start.z+(fall.target.z-fall.start.z)*ease);
+   const after=Math.max(0,age-fall.duration);fall.group.rotation.x=t<1?Math.sin(t*Math.PI)*.32:0;fall.group.rotation.z=t<1?Math.sin(t*Math.PI)*.1:0;
+   if(after>0)fall.group.position.y+=Math.abs(Math.sin(after*18))*.045*Math.exp(-after*9);
+   const opacity=age<fall.duration+.13?1:Math.max(0,1-(age-fall.duration-.13)/.32);fall.group.traverse(node=>{if(node.material)node.material.opacity=opacity;});
+   if(age>fall.duration+.46){this.disposeFall(fall);return false;}return true;
+  });
+ }
  render(state){
   if(this.lost)return {areas:[],zones:[]};this.resize(state.width,state.height);this.errorLight.intensity=state.error?18:0;
-  const now=performance.now();if(state.idle&&!state.reduceMotion)this.pose=Math.sin(now*.00016)*.027;this.machine.rotation.y=this.pose;
+  const now=performance.now();this.updateFalls(now);if(state.idle&&!state.reduceMotion)this.pose=Math.sin(now*.00016)*.027;this.machine.rotation.y=this.pose;
   const entries=state.entries,list=[null,...entries.slice().reverse()],cycleLength=Math.max(12,list.length+4),base=Math.floor(state.position),fraction=state.position-base;const areas=[];
   const meter=state.calorieMeter||{consumed:0,limit:null,label:'0 / —'},consoleKey=meter.label+'/'+state.date+'/'+Boolean(state.error);
   if(this.consoleKey!==consoleKey){
@@ -114,7 +136,7 @@ class ChromeMachine {
    const edge=Math.max(0,Math.min(1,(z+.65)/.65,(7.65-z)/.65));slot.group.scale.set(1,edge,edge);slot.group.rotation.x=z<0?Math.min(.85,-z*1.2):z>7?-Math.min(.85,(z-7)*1.2):0;
    const x=item?.id===state.extractedId?state.extractX/(this.width<700?90:155):0;
    slot.group.position.set(x,2.94-z*.305,-1.86+z*.43);
-   const active=item?.id===state.selectedId;
+   slot.entryId=item?.id||null;const active=item?.id===state.selectedId;
    const key=item?`${item.id}:${item.name}:${item.at}:${active}:${state.flash>.3}`:`empty:${base+i}`;
    if(key!==slot.key){
     slot.key=key;const c=slot.canvas.getContext('2d');c.clearRect(0,0,1024,128);
