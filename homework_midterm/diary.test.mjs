@@ -61,3 +61,13 @@ test('backup import preserves exhausted quota and validates exercise expenditure
  assert.throws(()=>D.parse(JSON.stringify({...doc,limitEdits:{[date]:{count:4,initialized:true}}})));
  const snapshot=D.parse(JSON.stringify({...doc,entries:[D.record({...movement(),burnedKcal:250})]}));assert.equal(snapshot.entries[0].burnedKcal,250);
 });
+test('detached tread remains in archive and calorie totals after backup round trip',()=>{
+ const original={...D.empty(),dailyLimit:1000,entries:[{...food(),detached:true},D.record({...movement(),burnedKcal:150})]};
+ const restored=D.parse(JSON.stringify(original));
+ assert.equal(restored.entries[0].detached,true);
+ assert.equal(D.forDay(restored.entries,'2026-10-26').length,2);
+ assert.equal(D.meter(restored,'2026-10-26').net,470);
+ assert.equal(D.merge(D.empty(),restored).entries[0].detached,true);
+ assert.equal(D.record({...food(),detached:undefined}).detached,false);
+ assert.throws(()=>D.record({...food(),detached:'true'}));
+});

@@ -20,7 +20,8 @@
     if(!Number.isInteger(value.amount) || value.amount < (value.type === 'move' ? 1 : 0) || value.amount > (value.type === 'move' ? 1440 : 10000)) throw Error(value.type === 'move' ? '운동 시간은 1~1440분으로 입력해 주세요.' : '칼로리는 0~10000 사이 정수로 입력해 주세요.');
     if(!validTime(value.at)) throw Error('올바른 날짜와 시각을 입력해 주세요.');
     if(value.note != null && (typeof value.note !== 'string' || value.note.length > 240)) throw Error('메모는 240자 이내로 입력해 주세요.');
-    const result={id: typeof value.id === 'string' && value.id.length < 120 ? value.id : uid(),type:value.type,name:value.name.trim(),amount:value.amount,at:value.at,icon:typeof value.icon === 'string' && value.icon.length <= 16 ? value.icon : value.type === 'meal' ? '🍚' : '🚶',note:value.note || ''};
+    if(value.detached != null && typeof value.detached !== 'boolean') throw Error('계단 보관 상태를 확인해 주세요.');
+    const result={id: typeof value.id === 'string' && value.id.length < 120 ? value.id : uid(),type:value.type,name:value.name.trim(),amount:value.amount,at:value.at,icon:typeof value.icon === 'string' && value.icon.length <= 16 ? value.icon : value.type === 'meal' ? '🍚' : '🚶',note:value.note || '',detached:value.detached === true};
     if(value.type==='move'){
       const burned=value.burnedKcal ?? 0;
       if(!Number.isInteger(burned)||burned<0||burned>100000)throw Error('소비 칼로리는 0~100000 사이 정수로 입력해 주세요.');
