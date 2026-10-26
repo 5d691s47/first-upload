@@ -39,6 +39,19 @@ function renderPeek(){
   const e=doc().entries.find(x=>x.id===selectedId);$('recordPeek').hidden=!peekVisible||!e||Boolean(pending);
   if(e){text('peekTime',e.at.slice(11));text('peekName',e.name);text('peekAmount',e.type==='move'?`${format(e.amount)}분 · −${format(e.burnedKcal||0)} kcal`:`${format(e.amount)} kcal`);}
 }
+const minutesOf=e=>Number(e.at.slice(11,13))*60+Number(e.at.slice(14,16));
+const clockLabel=minutes=>minutes===1440?'24:00':`${String(Math.floor(minutes/60)).padStart(2,'0')}:${String(minutes%60).padStart(2,'0')}`;
+function timelineLayout(entries){
+  if(!entries.length)return {start:0,end:1440,step:360,width:520,height:96,events:[]};
+  const sorted=entries.map(entry=>({entry,minutes:minutesOf(entry)})).sort((a,b)=>a.minutes-b.minutes),first=sorted[0].minutes,last=sorted.at(-1).minutes,rawSpan=last-first;
+  let span=Math.max(60,rawSpan+Math.max(36,rawSpan*.28)),center=(first+last)/2,start=Math.max(0,center-span/2),end=Math.min(1440,center+span/2);
+  if(end-start<span){if(start===0)end=Math.min(1440,span);else start=Math.max(0,1440-span);}
+  const steps=[15,30,60,120,180,360],step=steps.find(value=>(end-start)/value<=7)||360;
+  start=Math.max(0,Math.floor(start/step)*step);end=Math.min(1440,Math.ceil(end/step)*step);if(end===start)end=Math.min(1440,start+step);
+  const width=Math.max(520,Math.min(1240,entries.length*104+190)),lanes=[],events=[];
+  for(const item of sorted){const x=(item.minutes-start)/(end-start)*width;let lane=lanes.findIndex(lastX=>x-lastX>=98);if(lane<0){lane=lanes.length;lanes.push(-Infinity);}lanes[lane]=x;events.push({...item,lane,x});}
+  return {start,end,step,width,height:Math.max(96,lanes.length*50+60),events};
+}
 function renderArchive(){
   const entries=rows();text('archiveCount',`${entries.length} TRACES`);$('recordList').replaceChildren();
   if(!entries.length)$('recordList').append(el('div','empty-state','아직 새겨지지 않은 하루.'));
@@ -50,12 +63,14 @@ function renderArchive(){
     if(e.detached)b.append(el('span','record-detached','분리 보관'));
     b.addEventListener('click',()=>openDetail(e));$('recordList').append(b);
   }
-  const inner=el('div','timeline-inner');
-  for(let h=0;h<=24;h+=3){const tick=el('span','time-tick',String(h).padStart(2,'0'));tick.style.left=`${h/24*100}%`;inner.append(tick);}
-  for(const e of entries){const minutes=Number(e.at.slice(11,13))*60+Number(e.at.slice(14,16));const n=el('button',`time-event ${e.type}${e.detached?' detached':''}`);n.style.left=`${minutes/1440*100}%`;n.title=`${e.at.slice(11)} ${e.name}${e.detached?' · 분리 보관':''}`;n.append(el('span','',e.type==='meal'?'↓':'↑'),el('b','',e.name),el('small','',e.at.slice(11)));n.addEventListener('click',()=>openDetail(e));inner.append(n);}
-  $('timeline').replaceChildren(inner);$('legacyDraftButton').hidden=!doc().drafts.length;text('legacyDraftButton',`이전 식탁 메모 (${doc().drafts.length})`);
+  const inner=el('div','timeline-inner'),layout=timelineLayout(entries);inner.style.width=`max(100%, ${layout.width}px)`;inner.style.height=`${layout.height}px`;
+  for(let minute=Math.ceil(layout.start/layout.step)*layout.step;minute<=layout.end;minute+=layout.step){const tick=el('span','time-tick',clockLabel(minute));tick.style.left=`${(minute-layout.start)/(layout.end-layout.start)*100}%`;inner.append(tick);}
+  for(const item of layout.events){const e=item.entry,n=el('button',`time-event ${e.type}${e.detached?' detached':''}`),top=15+item.lane*50;n.style.left=`${(item.minutes-layout.start)/(layout.end-layout.start)*100}%`;n.style.top=`${top}px`;n.style.setProperty('--stem-height',`${Math.max(13,layout.height-top-39)}px`);n.title=`${e.at.slice(11)} ${e.name}${e.detached?' · 분리 보관':''}`;n.append(el('span','',e.type==='meal'?'↓':'↑'),el('b','',e.name),el('small','',e.at.slice(11)));n.addEventListener('click',()=>openDetail(e));inner.append(n);}
+  const timeline=$('timeline');timeline.replaceChildren(inner);timeline.dataset.focus=String(layout.events.length?layout.events.reduce((sum,item)=>sum+(item.minutes-layout.start)/(layout.end-layout.start),0)/layout.events.length:.5);if($('archiveDialog').open)focusTimeline();
+  $('legacyDraftButton').hidden=!doc().drafts.length;text('legacyDraftButton',`이전 식탁 메모 (${doc().drafts.length})`);
 }
-function openArchive(){stopMotion();resetPointers();renderArchive();if(!$('archiveDialog').open)$('archiveDialog').showModal();$('unfoldButton').setAttribute('aria-expanded','true');}
+function focusTimeline(){requestAnimationFrame(()=>{const timeline=$('timeline'),inner=timeline.firstElementChild;if(!inner)return;const focus=Number(timeline.dataset.focus||.5),target=inner.offsetLeft+inner.offsetWidth*focus-timeline.clientWidth/2;timeline.scrollLeft=Math.max(0,target);});}
+function openArchive(){stopMotion();resetPointers();renderArchive();if(!$('archiveDialog').open)$('archiveDialog').showModal();$('archiveDialog').scrollTop=0;focusTimeline();$('unfoldButton').setAttribute('aria-expanded','true');}
 $('archiveDialog').addEventListener('close',()=>{$('unfoldButton').setAttribute('aria-expanded','false');canvas.focus({preventScroll:true});});
 let detailEntryId=null;
 function openDetail(entry){
