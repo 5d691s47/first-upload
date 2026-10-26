@@ -2,7 +2,7 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 const port=Number(process.env.PORT||3000);
-const allowed=new Map([['/','index.html'],['/index.html','index.html'],['/sketch.js','sketch.js'],['/diary.js','diary.js'],['/style.css','style.css'],['/chrome-machine.js','chrome-machine.js'],['/vendor/three.min.js','vendor/three.min.js']]);
+const allowed=new Map([['/','index.html'],['/index.html','index.html'],['/sketch.js','sketch.js'],['/diary.js','diary.js'],['/style.css','style.css'],['/chrome-machine.js','chrome-machine.js'],['/spark-effects.js','spark-effects.js'],['/vendor/three.min.js','vendor/three.min.js']]);
 const send=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))};
 const limits=new Map();
 function permit(ip){const now=Date.now();for(const [key,v] of limits)if(now-v.start>60000)limits.delete(key);const v=limits.get(ip)||{start:now,count:0};v.count++;limits.set(ip,v);return v.count<=8}
