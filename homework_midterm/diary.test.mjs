@@ -47,12 +47,12 @@ test('first limit setup is free, three real edits are allowed, and fourth/clear 
  const saved=D.parse(JSON.stringify(doc));assert.equal(D.quota(saved,date).remaining,0);assert.throws(()=>D.changeLimit(saved,2000,date));
  assert.equal(D.quota(saved,'2026-10-27').remaining,3);const tomorrow=D.changeLimit(saved,1200,'2026-10-27');assert.equal(D.quota(tomorrow,'2026-10-27').count,1);
 });
-test('overload requires quota exhaustion AND net above limit; exercise recovers without deleting meals',()=>{
+test('overload starts after the first real limit edit and exercise recovers without deleting meals',()=>{
  const date='2026-10-26';let doc=D.changeLimit(D.empty(),1000,date);doc.entries=[{...food(),amount:1250}];
- assert.equal(D.overload(doc,date).active,false);for(const value of [1100,900,1000])doc=D.changeLimit(doc,value,date);
- assert.equal(D.overload(doc,date).active,true);doc.entries.push(D.record({...movement(),burnedKcal:250}));
- const restored=D.overload(doc,date);assert.equal(restored.active,false);assert.equal(restored.net,1000);assert.equal(restored.consumed,1250);assert.equal(restored.burned,250);assert.equal(doc.entries[0].amount,1250);assert.equal(D.quota(doc,date).remaining,0);
- doc.entries[1].burnedKcal=200;assert.equal(D.overload(doc,date).active,true);assert.equal(D.overload(doc,'2026-10-27').active,false);
+ assert.equal(D.overload(doc,date).active,false);doc=D.changeLimit(doc,1100,date);
+ const firstEdit=D.overload(doc,date);assert.equal(firstEdit.count,1);assert.equal(firstEdit.remaining,2);assert.equal(firstEdit.active,true);assert.equal(firstEdit.excess,150);
+ doc.entries.push(D.record({...movement(),burnedKcal:150}));const restored=D.overload(doc,date);assert.equal(restored.active,false);assert.equal(restored.net,1100);assert.equal(restored.consumed,1250);assert.equal(restored.burned,150);assert.equal(doc.entries[0].amount,1250);
+ doc.entries[1].burnedKcal=100;assert.equal(D.overload(doc,date).active,true);assert.equal(D.overload(doc,'2026-10-27').active,false);
 });
 test('backup import preserves exhausted quota and validates exercise expenditure',()=>{
  const date='2026-10-26';let doc=D.changeLimit(D.empty(),1000,date);for(const value of [1100,900,1000])doc=D.changeLimit(doc,value,date);

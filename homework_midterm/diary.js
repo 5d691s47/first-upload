@@ -87,7 +87,7 @@
   }
   function overload(document,date=day()){
     const current=meter(document,date),edits=quota(document,date);
-    return {active:current.limit!=null&&edits.remaining===0&&current.net>current.limit,excess:current.limit==null?0:Math.max(0,current.net-current.limit),...current,...edits};
+    return {active:current.limit!=null&&edits.count>=1&&current.net>current.limit,excess:current.limit==null?0:Math.max(0,current.net-current.limit),...current,...edits};
   }
   function merge(a,b) {
     const byId = new Map(a.entries.map(x=>[x.id,x]));

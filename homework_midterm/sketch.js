@@ -158,6 +158,7 @@ $('limitForm').addEventListener('submit',async event=>{
 function updateErrorState(){
   const previous=Boolean(errorState?.active);errorState=D.overload(doc(),D.day());
   document.body.classList.toggle('is-error',errorState.active);$('errorPanel').hidden=!errorState.active;
+  text('errorCondition','한도 수정 '+errorState.count+' / 3 · 섭취 − 소비 한도 초과');
   text('errorBalance','오늘 '+errorState.consumed+' − '+errorState.burned+' = '+errorState.net+' / '+(errorState.limit??'—')+' kcal');
   if(previous!==errorState.active){errorClock=0;errorOffset=0;errorLastTime=performance.now();
     hint(errorState.active?'↑ 운동 기록에서 소비 칼로리를 입력할 수 있어요.':'정상 작동으로 돌아왔어요.');
